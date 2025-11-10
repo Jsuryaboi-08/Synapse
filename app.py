@@ -16,8 +16,6 @@ st.set_page_config(
 )
 
 # --- Professional Dark Theme Styling ---
-# This CSS replaces the previous gradient/shadow-heavy theme
-# with a cleaner, solid-color professional design.
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap');
@@ -52,6 +50,7 @@ st.markdown("""
         border-radius: 10px;
         border: 1px solid #334155;
         transition: transform 0.2s;
+        height: 100%; /* Ensure cards in a row are same height */
     }
     
     .metric-card:hover {
@@ -150,6 +149,28 @@ st.markdown("""
         background-color: #0B8DC1;
         border: 1px solid #0B8DC1;
     }
+    
+    /* News Article Styling */
+    .news-article {
+        background-color: #1E293B;
+        border: 1px solid #334155;
+        border-radius: 8px;
+        padding: 15px;
+        margin-bottom: 10px;
+    }
+    .news-title a {
+        color: #E2E8F0;
+        font-weight: 600;
+        font-size: 1.1rem;
+        text-decoration: none;
+    }
+    .news-title a:hover {
+        color: #0EA5E9;
+    }
+    .news-publisher {
+        color: #94A3B8;
+        font-size: 0.9rem;
+    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -164,7 +185,7 @@ def fetch_company_data(ticker):
         financials = stock.financials
         balance_sheet = stock.balance_sheet
         cashflow = stock.cashflow
-        history = stock.history(period="5y")
+        history = stock.history(period="5y") # Get 5 years for TA
         quarterly_financials = stock.quarterly_financials
         
         # Check for essential data
@@ -176,8 +197,9 @@ def fetch_company_data(ticker):
             'financials': financials.to_dict() if not financials.empty else {},
             'balance_sheet': balance_sheet.to_dict() if not balance_sheet.empty else {},
             'cashflow': cashflow.to_dict() if not cashflow.empty else {},
-            'history': history.to_dict() if not history.empty else {},
+            'history': history, # Return DataFrame for easier handling
             'quarterly_financials': quarterly_financials.to_dict() if not quarterly_financials.empty else {},
+            'news': stock.news, # NEW: Get company news
             'ticker': ticker
         }
     except Exception as e:
@@ -189,13 +211,26 @@ def get_risk_free_rate():
     """Fetch 10-Year Treasury yield as risk-free rate"""
     try:
         tnx = yf.Ticker("^TNX")
-        history = tnx.history(period="1d")
+        history = tnx.history(period="5d") # Get 5 days to ensure we get last closing price
         if not history.empty:
             return history['Close'].iloc[-1] / 100  # Convert percentage to decimal
         else:
             return 0.04  # Fallback
     except Exception:
         return 0.04 # Fallback
+
+def get_financial_item(df, keys, year=0):
+    """
+    Safely get a financial item from a DataFrame by checking multiple possible keys.
+    Returns None if no key is found or value is NaN.
+    """
+    if df.empty or year >= len(df.columns):
+        return None
+    for key in keys:
+        if key in df.index:
+            value = df.loc[key].iloc[year]
+            return value if pd.notna(value) else None
+    return None # None of the keys were found
 
 def calculate_advanced_ratios(data):
     """Calculate comprehensive set of financial ratios with trend analysis"""
@@ -215,10 +250,10 @@ def calculate_advanced_ratios(data):
         ratios = {}
         
         # Profitability Ratios
-        revenue = latest_financials.get('Total Revenue', 0)
-        gross_profit = latest_financials.get('Gross Profit', 0)
-        ebit = latest_financials.get('EBIT', 0)
-        net_income = latest_financials.get('Net Income', 0)
+        revenue = get_financial_item(financials, ['Total Revenue'], year=0) or 0
+        gross_profit = get_financial_item(financials, ['Gross Profit'], year=0) or 0
+        ebit = get_financial_item(financials, ['EBIT'], year=0) or 0
+        net_income = get_financial_item(financials, ['Net Income'], year=0) or 0
         
         ratios['Gross Margin'] = (gross_profit / revenue * 100) if revenue > 0 else info.get('grossMargins', 0) * 100
         ratios['EBIT Margin'] = (ebit / revenue * 100) if revenue > 0 else info.get('operatingMargins', 0) * 100
@@ -227,42 +262,46 @@ def calculate_advanced_ratios(data):
         ratios['ROA'] = info.get('returnOnAssets', 0) * 100
         
         # ROIC Calculation
-        total_debt = latest_balance.get('Total Debt', info.get('totalDebt', 0))
-        equity = latest_balance.get('Stockholders Equity', info.get('totalStockholderEquity', 0))
+        total_debt = get_financial_item(balance_sheet, ['Total Debt', 'Total Debt Net Minority Interest'], year=0) or 0
+        equity = get_financial_item(balance_sheet, ['Stockholders Equity', 'Total Stockholder Equity'], year=0) or 0
         invested_capital = total_debt + equity
-        tax_rate = latest_financials.get('Income Tax Expense', 0) / latest_financials.get('Income Before Tax', 1)
+        tax_expense = get_financial_item(financials, ['Income Tax Expense', 'Tax Provision'], year=0) or 0
+        income_before_tax = get_financial_item(financials, ['Income Before Tax', 'Pretax Income'], year=0) or 1
+        tax_rate = (tax_expense / income_before_tax) if income_before_tax > 0 else 0.21
         nopat = ebit * (1 - tax_rate)
         ratios['ROIC'] = (nopat / invested_capital * 100) if invested_capital > 0 else 0
         
         # Liquidity Ratios
-        current_assets = latest_balance.get('Current Assets', 0)
-        current_liabilities = latest_balance.get('Current Liabilities', 1)
-        inventory = latest_balance.get('Inventory', 0)
+        current_assets = get_financial_item(balance_sheet, ['Current Assets'], year=0) or 0
+        current_liabilities = get_financial_item(balance_sheet, ['Current Liabilities'], year=0) or 1
+        inventory = get_financial_item(balance_sheet, ['Inventory'], year=0) or 0
         
         ratios['Current Ratio'] = current_assets / current_liabilities if current_liabilities > 0 else 0
         ratios['Quick Ratio'] = (current_assets - inventory) / current_liabilities if current_liabilities > 0 else 0
         
         # Leverage Ratios
-        cash = latest_balance.get('Cash And Cash Equivalents', 0)
+        cash = get_financial_item(balance_sheet, ['Cash And Cash Equivalents', 'Cash'], year=0) or 0
         ratios['Net Debt'] = (total_debt - cash) / 1e9
         ratios['Debt/Equity'] = (total_debt / equity * 100) if equity > 0 else 0
-        ratios['Debt/Assets'] = (total_debt / latest_balance.get('Total Assets', 1) * 100)
-        ratios['Interest Coverage'] = (ebit / abs(latest_financials.get('Interest Expense', 1))) if latest_financials.get('Interest Expense') else 0
+        total_assets = get_financial_item(balance_sheet, ['Total Assets'], year=0) or 1
+        ratios['Debt/Assets'] = (total_debt / total_assets * 100)
+        interest_expense = get_financial_item(financials, ['Interest Expense'], year=0) or 0
+        ratios['Interest Coverage'] = (ebit / abs(interest_expense)) if interest_expense != 0 else 0
         
         # Efficiency Ratios
-        cogs = latest_financials.get('Cost Of Revenue', 0)
-        receivables = latest_balance.get('Accounts Receivable', 0)
-        payables = latest_balance.get('Accounts Payable', 0)
+        cogs = get_financial_item(financials, ['Cost Of Revenue', 'Cost Of Goods Sold'], year=0) or 0
+        receivables = get_financial_item(balance_sheet, ['Accounts Receivable'], year=0) or 0
+        payables = get_financial_item(balance_sheet, ['Accounts Payable'], year=0) or 0
         
         ratios['DIO'] = (inventory / cogs * 365) if cogs > 0 else 0
         ratios['DSO'] = (receivables / revenue * 365) if revenue > 0 else 0
         ratios['DPO'] = (payables / cogs * 365) if cogs > 0 else 0
         ratios['Cash Conversion Cycle'] = ratios['DIO'] + ratios['DSO'] - ratios['DPO']
-        ratios['Asset Turnover'] = revenue / latest_balance.get('Total Assets', 1)
+        ratios['Asset Turnover'] = revenue / total_assets
         
         # Cash Flow Ratios
-        operating_cf = latest_cf.get('Operating Cash Flow', 0)
-        capex = abs(latest_cf.get('Capital Expenditure', 0))
+        operating_cf = get_financial_item(cashflow, ['Operating Cash Flow', 'Total Cash From Operating Activities'], year=0) or 0
+        capex = abs(get_financial_item(cashflow, ['Capital Expenditure', 'CapEx'], year=0) or 0)
         fcf = operating_cf - capex # This is FCFE
         
         ratios['FCF'] = fcf / 1e9
@@ -270,10 +309,9 @@ def calculate_advanced_ratios(data):
         ratios['OCF/Net Income'] = (operating_cf / net_income) if net_income != 0 else 0
         
         # Altman Z-Score (Enhanced)
-        total_assets = latest_balance.get('Total Assets', 1)
-        retained_earnings = latest_balance.get('Retained Earnings', 0)
+        retained_earnings = get_financial_item(balance_sheet, ['Retained Earnings'], year=0) or 0
         market_cap = info.get('marketCap', 0)
-        total_liabilities = latest_balance.get('Total Liabilities Net Minority Interest', 1)
+        total_liabilities = get_financial_item(balance_sheet, ['Total Liabilities Net Minority Interest'], year=0) or 1
         
         if total_assets > 0:
             x1 = (current_assets - current_liabilities) / total_assets
@@ -298,7 +336,7 @@ def calculate_advanced_ratios(data):
         
         return ratios
     except Exception as e:
-        st.error(f"Error calculating ratios: {str(e)}")
+        # st.error(f"Error calculating ratios: {str(e)}") # Can be noisy
         return {}
 
 def calculate_piotroski_score(data):
@@ -314,55 +352,43 @@ def calculate_piotroski_score(data):
         score = 0
         
         # --- Profitability (4 points) ---
-        # 1. Net Income
-        net_income = financials.loc['Net Income'].iloc[0]
+        net_income = get_financial_item(financials, ['Net Income'], year=0) or 0
         score += 1 if net_income > 0 else 0
         
-        # 2. Operating Cash Flow
-        if 'Operating Cash Flow' in cashflow.index:
-            ocf = cashflow.loc['Operating Cash Flow'].iloc[0]
-            score += 1 if ocf > 0 else 0
-            
-            # 3. OCF vs Net Income
-            score += 1 if ocf > net_income else 0
+        ocf = get_financial_item(cashflow, ['Operating Cash Flow', 'Total Cash From Operating Activities'], year=0) or 0
+        score += 1 if ocf > 0 else 0
+        score += 1 if ocf > net_income else 0
         
-        # 4. ROA
-        if 'Total Assets' in balance_sheet.index:
-            roa_current = net_income / balance_sheet.loc['Total Assets'].iloc[0]
-            roa_previous = financials.loc['Net Income'].iloc[1] / balance_sheet.loc['Total Assets'].iloc[1]
-            score += 1 if roa_current > roa_previous else 0
+        assets_0 = get_financial_item(balance_sheet, ['Total Assets'], year=0) or 1
+        assets_1 = get_financial_item(balance_sheet, ['Total Assets'], year=1) or 1
+        net_income_1 = get_financial_item(financials, ['Net Income'], year=1) or 0
+        roa_current = net_income / assets_0
+        roa_previous = net_income_1 / assets_1
+        score += 1 if roa_current > roa_previous else 0
         
         # --- Leverage (3 points) ---
-        # 5. Leverage
-        if 'Total Debt' in balance_sheet.index:
-            debt_ratio_current = balance_sheet.loc['Total Debt'].iloc[0] / balance_sheet.loc['Total Assets'].iloc[0]
-            debt_ratio_previous = balance_sheet.loc['Total Debt'].iloc[1] / balance_sheet.loc['Total Assets'].iloc[1]
-            score += 1 if debt_ratio_current < debt_ratio_previous else 0
+        debt_ratio_current = (get_financial_item(balance_sheet, ['Total Debt'], year=0) or 0) / assets_0
+        debt_ratio_previous = (get_financial_item(balance_sheet, ['Total Debt'], year=1) or 0) / assets_1
+        score += 1 if debt_ratio_current < debt_ratio_previous else 0
         
-        # 6. Current Ratio
-        if 'Current Assets' in balance_sheet.index and 'Current Liabilities' in balance_sheet.index:
-            current_ratio = balance_sheet.loc['Current Assets'].iloc[0] / balance_sheet.loc['Current Liabilities'].iloc[0]
-            previous_current_ratio = balance_sheet.loc['Current Assets'].iloc[1] / balance_sheet.loc['Current Liabilities'].iloc[1]
-            score += 1 if current_ratio > previous_current_ratio else 0
+        cr_0 = (get_financial_item(balance_sheet, ['Current Assets'], year=0) or 0) / (get_financial_item(balance_sheet, ['Current Liabilities'], year=0) or 1)
+        cr_1 = (get_financial_item(balance_sheet, ['Current Assets'], year=1) or 0) / (get_financial_item(balance_sheet, ['Current Liabilities'], year=1) or 1)
+        score += 1 if cr_0 > cr_1 else 0
         
-        # 7. Share Issuance (Using Shareholder Equity as proxy)
-        if 'Stockholders Equity' in balance_sheet.index:
-            equity_current = balance_sheet.loc['Stockholders Equity'].iloc[0]
-            equity_previous = balance_sheet.loc['Stockholders Equity'].iloc[1]
-            score += 1 if equity_current >= equity_previous else 0 # Simple check
+        equity_0 = get_financial_item(balance_sheet, ['Stockholders Equity'], year=0) or 0
+        equity_1 = get_financial_item(balance_sheet, ['Stockholders Equity'], year=1) or 0
+        score += 1 if equity_0 >= equity_1 else 0 # Simple check
             
         # --- Operating Efficiency (2 points) ---
-        # 8. Gross Margin
-        if 'Gross Profit' in financials.index and 'Total Revenue' in financials.index:
-            gm_current = financials.loc['Gross Profit'].iloc[0] / financials.loc['Total Revenue'].iloc[0]
-            gm_previous = financials.loc['Gross Profit'].iloc[1] / financials.loc['Total Revenue'].iloc[1]
-            score += 1 if gm_current > gm_previous else 0
+        rev_0 = get_financial_item(financials, ['Total Revenue'], year=0) or 1
+        rev_1 = get_financial_item(financials, ['Total Revenue'], year=1) or 1
+        gm_current = (get_financial_item(financials, ['Gross Profit'], year=0) or 0) / rev_0
+        gm_previous = (get_financial_item(financials, ['Gross Profit'], year=1) or 0) / rev_1
+        score += 1 if gm_current > gm_previous else 0
         
-        # 9. Asset Turnover
-        if 'Total Assets' in balance_sheet.index:
-            asset_turnover_current = financials.loc['Total Revenue'].iloc[0] / balance_sheet.loc['Total Assets'].iloc[0]
-            asset_turnover_previous = financials.loc['Total Revenue'].iloc[1] / balance_sheet.loc['Total Assets'].iloc[1]
-            score += 1 if asset_turnover_current > asset_turnover_previous else 0
+        asset_turnover_current = rev_0 / assets_0
+        asset_turnover_previous = rev_1 / assets_1
+        score += 1 if asset_turnover_current > asset_turnover_previous else 0
         
         return score
     except:
@@ -402,8 +428,26 @@ def calculate_sharpe_sortino(returns, risk_free_rate=0.02):
 
 # --- NEW: Advanced DCF Functions ---
 
+# NEW: Helper to calculate historical CAGR
+def calculate_cagr(data, years=5):
+    """Calculates historical revenue CAGR"""
+    try:
+        financials = pd.DataFrame(data['financials'])
+        if financials.empty or len(financials.columns) < years:
+            return 0.05 # Fallback
+        
+        start_revenue = get_financial_item(financials, ['Total Revenue'], year=years-1)
+        end_revenue = get_financial_item(financials, ['Total Revenue'], year=0)
+        
+        if start_revenue and end_revenue and start_revenue > 0:
+            cagr = (end_revenue / start_revenue)**(1/(years-1)) - 1
+            return max(0, cagr) # Don't allow negative default growth
+        return 0.05 # Fallback
+    except Exception:
+        return 0.05 # Fallback
+
 def calculate_wacc(data, rfr, market_premium):
-    """Calculates WACC from company data"""
+    """Calculates WACC from company data using the safe getter"""
     try:
         info = data['info']
         financials = pd.DataFrame(data['financials'])
@@ -419,16 +463,20 @@ def calculate_wacc(data, rfr, market_premium):
         Re = rfr + beta * market_premium
 
         # Cost of Debt (Rd)
-        interest_expense = financials.loc['Interest Expense'].iloc[0] if 'Interest Expense' in financials.index else 0
-        total_debt = balance_sheet.loc['Total Debt'].iloc[0] if 'Total Debt' in balance_sheet.index else 0
+        interest_expense = get_financial_item(financials, ['Interest Expense'], year=0) or 0
+        total_debt = get_financial_item(balance_sheet, ['Total Debt', 'Total Debt Net Minority Interest'], year=0) or 0
         
         # Handle cases where interest expense is positive or zero
         Rd = abs(interest_expense) / total_debt if total_debt > 0 and interest_expense != 0 else rfr + 0.02 # Proxy if no debt/interest
 
         # Tax Rate (T)
-        income_before_tax = financials.loc['Income Before Tax'].iloc[0] if 'Income Before Tax' in financials.index else 0
-        income_tax = financials.loc['Income Tax Expense'].iloc[0] if 'Income Tax Expense' in financials.index else 0
-        tax_rate = (income_tax / income_before_tax) if income_before_tax > 0 else 0.21 # Fallback to 21%
+        income_before_tax = get_financial_item(financials, ['Income Before Tax', 'Pretax Income'], year=0)
+        income_tax = get_financial_item(financials, ['Income Tax Expense', 'Tax Provision'], year=0)
+        
+        if income_before_tax and income_tax and income_before_tax > 0:
+            tax_rate = (income_tax / income_before_tax)
+        else:
+            tax_rate = 0.21 # Fallback to 21%
 
         # Market Values (E, D, V)
         E = info.get('marketCap')
@@ -436,6 +484,9 @@ def calculate_wacc(data, rfr, market_premium):
             return None, "Market Cap not available."
         D = total_debt # Use book value of debt as proxy for market value
         V = E + D
+        
+        if V == 0:
+            return None, "Cannot calculate E/V and D/V as V is zero."
 
         # WACC
         wacc = (E/V * Re) + (D/V * Rd * (1 - tax_rate))
@@ -475,23 +526,48 @@ def calculate_dcf_valuation_advanced(data, wacc, g_5y, g_10y, g_t):
         # --- 1. Calculate Base Year (T=0) FCFF ---
         
         # NOPAT = EBIT * (1 - Tax Rate)
-        ebit = financials.loc['EBIT'].iloc[0]
-        tax_expense = financials.loc['Income Tax Expense'].iloc[0]
-        income_before_tax = financials.loc['Income Before Tax'].iloc[0]
-        tax_rate = (tax_expense / income_before_tax) if income_before_tax > 0 else 0.21 # Use 21% fallback
+        ebit = get_financial_item(financials, ['EBIT'], year=0)
+        tax_expense = get_financial_item(financials, ['Income Tax Expense', 'Tax Provision'], year=0)
+        income_before_tax = get_financial_item(financials, ['Income Before Tax', 'Pretax Income'], year=0)
+
+        # Check for missing data for tax rate
+        if tax_expense is not None and income_before_tax is not None and income_before_tax > 0:
+            tax_rate = (tax_expense / income_before_tax)
+        else:
+            tax_rate = 0.21 # Fallback
+        
+        if ebit is None:
+            st.error("Error in DCF calculation: Could not find 'EBIT'.")
+            return None
+            
         nopat = ebit * (1 - tax_rate)
 
         # Net Investment = (CapEx - D&A) + (Change in NWC)
-        capex = abs(cashflow.loc['Capital Expenditure'].iloc[0])
-        d_and_a = cashflow.loc['Depreciation And Amortization'].iloc[0]
-        
+        capex = get_financial_item(cashflow, ['Capital Expenditure', 'CapEx'], year=0)
+        d_and_a = get_financial_item(cashflow, ['Depreciation And Amortization', 'Depreciation'], year=0)
+
+        if capex is None:
+            st.error("Error in DCF calculation: Could not find 'Capital Expenditure'.")
+            return None
+        if d_and_a is None:
+            st.error("Error in DCF calculation: Could not find 'Depreciation And Amortization'.")
+            return None
+            
+        capex = abs(capex) # Make sure it's positive
+
         # Change in Net Working Capital (NWC)
         # NWC = (Current Assets - Cash) - (Current Liabilities - Short-Term Debt)
         def get_nwc(col):
-            ca = balance_sheet.loc['Current Assets'].iloc[col]
-            cash = balance_sheet.loc['Cash And Cash Equivalents'].iloc[col]
-            cl = balance_sheet.loc['Current Liabilities'].iloc[col]
-            std = balance_sheet.loc['Short Term Debt'].iloc[col] if 'Short Term Debt' in balance_sheet.index else 0
+            ca = get_financial_item(balance_sheet, ['Current Assets'], year=col)
+            cash = get_financial_item(balance_sheet, ['Cash And Cash Equivalents', 'Cash'], year=col)
+            cl = get_financial_item(balance_sheet, ['Current Liabilities'], year=col)
+            std = get_financial_item(balance_sheet, ['Short Term Debt', 'Short Long Term Debt'], year=col) or 0 # Default to 0 if None
+            
+            # Check for critical missing NWC components
+            if ca is None: raise ValueError("Missing 'Current Assets' for NWC calc.")
+            if cash is None: raise ValueError("Missing 'Cash' for NWC calc.")
+            if cl is None: raise ValueError("Missing 'Current Liabilities' for NWC calc.")
+            
             return (ca - cash) - (cl - std)
 
         nwc_0 = get_nwc(0) # Most recent year
@@ -502,8 +578,7 @@ def calculate_dcf_valuation_advanced(data, wacc, g_5y, g_10y, g_t):
         fcff_0 = nopat + d_and_a - capex - change_nwc
         
         if fcff_0 <= 0:
-            st.warning("Base year FCFF is negative. DCF model may be unreliable.")
-            # We can still proceed, but it's a red flag.
+            st.warning(f"Base year FCFF is negative (${fcff_0/1e6:,.2f}M). DCF model may be unreliable, but proceeding.")
         
         # --- 2. Project FCFF for 10 Years (2-Stage) ---
         projected_fcf = []
@@ -524,7 +599,7 @@ def calculate_dcf_valuation_advanced(data, wacc, g_5y, g_10y, g_t):
         # --- 3. Calculate Terminal Value (Gordon Growth) ---
         # TV = FCFF_10 * (1 + g_t) / (WACC - g_t)
         if wacc <= g_t:
-            st.error("WACC must be greater than Terminal Growth Rate.")
+            st.error(f"WACC ({wacc*100:.2f}%) must be greater than Terminal Growth Rate ({g_t*100:.2f}%).")
             return None
         
         terminal_value = projected_fcf[-1] * (1 + g_t) / (wacc - g_t)
@@ -536,13 +611,17 @@ def calculate_dcf_valuation_advanced(data, wacc, g_5y, g_10y, g_t):
         enterprise_value = pv_fcf + pv_terminal
 
         # --- 5. Calculate Equity Value and Intrinsic Price ---
-        total_debt = balance_sheet.loc['Total Debt'].iloc[0]
-        cash = balance_sheet.loc['Cash And Cash Equivalents'].iloc[0]
-        minority_interest = balance_sheet.loc['Minority Interest'].iloc[0] if 'Minority Interest' in balance_sheet.index else 0
+        total_debt = get_financial_item(balance_sheet, ['Total Debt', 'Total Debt Net Minority Interest'], year=0) or 0
+        cash = get_financial_item(balance_sheet, ['Cash And Cash Equivalents', 'Cash'], year=0) or 0
+        minority_interest = get_financial_item(balance_sheet, ['Minority Interest'], year=0) or 0
         
         equity_value = enterprise_value - total_debt + cash - minority_interest
         
-        shares_outstanding = info.get('sharesOutstanding', 1)
+        shares_outstanding = info.get('sharesOutstanding')
+        if not shares_outstanding or shares_outstanding == 0:
+            st.error("Shares Outstanding data is missing, cannot calculate per-share value.")
+            return None
+            
         intrinsic_value_per_share = equity_value / shares_outstanding
         
         return {
@@ -624,7 +703,7 @@ def main():
         data = st.session_state['data']
         info = data['info']
         ticker = st.session_state['ticker']
-        history = pd.DataFrame(data['history'])
+        history = data['history'] # Now a DataFrame
         
         # Company Overview Header
         col1, col2, col3, col4, col5 = st.columns(5)
@@ -657,11 +736,12 @@ def main():
         """, unsafe_allow_html=True)
         
         # Tabs
-        tab1, tab2, tab3, tab4 = st.tabs([
+        tab1, tab2, tab3, tab4, tab5 = st.tabs([
             "Financial Health", 
             "Risk Analytics", 
             "Valuation Models",
-            "Technical Analysis"
+            "Technical Analysis",
+            "Financial News" # NEW TAB
         ])
         
         # Tab 1: Enhanced Health Scorecard
@@ -819,7 +899,7 @@ def main():
                     
                     st.metric("Historical Volatility", f"{hist_vol*100:.2f}%")
                     st.metric("Historical Drift", f"{hist_drift*100:.2f}%")
-                    st.metric("Sharpe Ratio", f"{calculate_sharpe_sortino(returns)[0]:.2f}")
+                    st.metric("Sharpe Ratio", f"{calculate_sharpe_sortino(returns, get_risk_free_rate())[0]:.2f}")
                 
                 run_sim = st.button("Run Simulation", type="primary", use_container_width=True)
             
@@ -840,7 +920,7 @@ def main():
                             final_returns = (final_prices - current_price) / current_price
                             
                             var, cvar = calculate_var_cvar(final_returns, confidence_level)
-                            sharpe, sortino = calculate_sharpe_sortino(returns)
+                            sharpe, sortino = calculate_sharpe_sortino(returns, get_risk_free_rate())
                             
                             st.session_state['mc_results'] = {
                                 'price_paths': price_paths,
@@ -1016,7 +1096,7 @@ def main():
                 rfr = st.slider(
                     "Risk-Free Rate (10y Treasury)",
                     min_value=0.01, max_value=0.07,
-                    value=get_risk_free_rate(), step=0.001, format="%.3f%%"
+                    value=get_risk_free_rate(), step=0.001, format="%.3f%%" # Smart Default
                 )
                 market_premium = st.slider(
                     "Equity Market Risk Premium",
@@ -1034,15 +1114,25 @@ def main():
                     st.error(f"Could not calculate WACC: {wacc_details}")
                     st.stop()
                 
+                # --- NEW: Smart Growth Defaults ---
+                hist_cagr = calculate_cagr(data)
+                default_g_5y = round(hist_cagr, 3)
+                default_g_10y = round(hist_cagr / 2, 3)
+                # ----------------------------------
+                
                 # Growth Assumptions
                 st.markdown("##### Growth Inputs")
                 g_5y = st.slider(
                     "FCFF Growth (Years 1-5)",
-                    min_value=-0.05, max_value=0.30, value=0.10, step=0.01, format="%.1f%%"
+                    min_value=-0.05, max_value=0.30, 
+                    value=default_g_5y, # Smart Default
+                    step=0.01, format="%.1f%%"
                 )
                 g_10y = st.slider(
                     "FCFF Growth (Years 6-10)",
-                    min_value=-0.05, max_value=0.20, value=0.05, step=0.01, format="%.1f%%"
+                    min_value=-0.05, max_value=0.20, 
+                    value=default_g_10y, # Smart Default
+                    step=0.01, format="%.1f%%"
                 )
                 g_t = st.slider(
                     "Terminal Growth Rate",
@@ -1227,107 +1317,178 @@ def main():
                 else:
                     st.error("Unable to calculate DCF - insufficient financial data or negative cash flows")
         
-        # Tab 4: Technical Analysis
+        # --- TAB 4: REBUILT TECHNICAL ANALYSIS ---
         with tab4:
-            st.markdown("### Technical Analysis & Price Action")
+            st.markdown("### Dynamic Technical Analysis")
             
-            if not history.empty:
-                # Price Chart with Moving Averages
-                fig = make_subplots(
-                    rows=2, cols=1,
-                    row_heights=[0.7, 0.3],
-                    subplot_titles=("Price & Moving Averages", "Volume"),
-                    vertical_spacing=0.1
+            # --- Chart Controls ---
+            st.markdown("#### Chart Controls")
+            col1, col2, col3 = st.columns([1, 1, 2])
+            with col1:
+                period = st.radio(
+                    "Select Time Period", 
+                    ["3m", "6m", "1y", "5y"], 
+                    index=2, # Default to 1y
+                    horizontal=True
                 )
-                
-                # Calculate moving averages
-                history['SMA_20'] = history['Close'].rolling(20).mean()
-                history['SMA_50'] = history['Close'].rolling(50).mean()
-                history['SMA_200'] = history['Close'].rolling(200).mean()
-                
-                # Candlestick
-                fig.add_trace(go.Candlestick(
-                    x=history.index,
-                    open=history['Open'],
-                    high=history['High'],
-                    low=history['Low'],
-                    close=history['Close'],
-                    name='Price',
-                    increasing_line_color='#10B981',
-                    decreasing_line_color='#EF4444'
-                ), row=1, col=1)
-                
-                # Moving averages
-                fig.add_trace(go.Scatter(x=history.index, y=history['SMA_20'], 
+            with col2:
+                st.markdown("**Indicators**")
+                show_bb = st.checkbox("Bollinger Bands", value=True)
+                show_sma = st.checkbox("Moving Averages", value=True)
+            with col3:
+                st.markdown("**Oscillators (in new pane)**")
+                show_rsi = st.checkbox("RSI", value=True)
+                show_macd = st.checkbox("MACD", value=True)
+            
+            # --- Filter Data by Period ---
+            period_map = {"3m": 63, "6m": 126, "1y": 252, "5y": len(history)}
+            chart_data = history.iloc[-period_map[period]:].copy()
+
+            # --- Calculate Indicators ---
+            # Moving Averages
+            chart_data['SMA_20'] = chart_data['Close'].rolling(20).mean()
+            chart_data['SMA_50'] = chart_data['Close'].rolling(50).mean()
+            chart_data['SMA_200'] = chart_data['Close'].rolling(200).mean()
+            
+            # Bollinger Bands
+            chart_data['BB_Mid'] = chart_data['SMA_20']
+            chart_data['BB_Std'] = chart_data['Close'].rolling(20).std()
+            chart_data['BB_Upper'] = chart_data['BB_Mid'] + (chart_data['BB_Std'] * 2)
+            chart_data['BB_Lower'] = chart_data['BB_Mid'] - (chart_data['BB_Std'] * 2)
+            
+            # RSI
+            delta = chart_data['Close'].diff(1)
+            gain = (delta.where(delta > 0, 0)).rolling(14).mean()
+            loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
+            rs = gain / loss
+            chart_data['RSI'] = 100 - (100 / (1 + rs))
+
+            # MACD
+            ema_12 = chart_data['Close'].ewm(span=12, adjust=False).mean()
+            ema_26 = chart_data['Close'].ewm(span=26, adjust=False).mean()
+            chart_data['MACD'] = ema_12 - ema_26
+            chart_data['MACD_Signal'] = chart_data['MACD'].ewm(span=9, adjust=False).mean()
+            chart_data['MACD_Hist'] = chart_data['MACD'] - chart_data['MACD_Signal']
+            
+            # --- Create Dynamic Subplots ---
+            rows = 1
+            row_heights = [0.7]
+            specs = [[{"secondary_y": False}]]
+            
+            if show_rsi:
+                rows += 1
+                row_heights.append(0.15)
+                specs.append([{"secondary_y": False}])
+            if show_macd:
+                rows += 1
+                row_heights.append(0.15)
+                specs.append([{"secondary_y": False}])
+            
+            row_heights = [h / sum(row_heights) for h in row_heights] # Normalize
+            
+            fig = make_subplots(
+                rows=rows, cols=1,
+                shared_xaxes=True,
+                row_heights=row_heights,
+                vertical_spacing=0.03,
+                specs=specs
+            )
+            
+            # --- Row 1: Price Chart ---
+            fig.add_trace(go.Candlestick(
+                x=chart_data.index,
+                open=chart_data['Open'],
+                high=chart_data['High'],
+                low=chart_data['Low'],
+                close=chart_data['Close'],
+                name='Price',
+                increasing_line_color='#10B981',
+                decreasing_line_color='#EF4444'
+            ), row=1, col=1)
+
+            if show_sma:
+                fig.add_trace(go.Scatter(x=chart_data.index, y=chart_data['SMA_20'], 
                                          name='SMA 20', line=dict(color='#0EA5E9', width=1)), row=1, col=1)
-                fig.add_trace(go.Scatter(x=history.index, y=history['SMA_50'], 
+                fig.add_trace(go.Scatter(x=chart_data.index, y=chart_data['SMA_50'], 
                                          name='SMA 50', line=dict(color='#F59E0B', width=1)), row=1, col=1)
-                fig.add_trace(go.Scatter(x=history.index, y=history['SMA_200'], 
-                                         name='SMA 200', line=dict(color='#E11D48', width=2)), row=1, col=1)
-                
-                # Volume
-                colors = ['#10B981' if history['Close'].iloc[i] >= history['Open'].iloc[i] 
-                          else '#EF4444' for i in range(len(history))]
-                fig.add_trace(go.Bar(x=history.index, y=history['Volume'], 
-                                     name='Volume', marker_color=colors, showlegend=False), row=2, col=1)
-                
-                fig.update_layout(
-                    template="plotly_dark",
-                    plot_bgcolor="#0F172A",
-                    paper_bgcolor="#0F172A",
-                    height=700,
-                    xaxis_rangeslider_visible=False,
-                    hovermode='x unified'
-                )
-                
-                fig.update_xaxes(title_text="Date", row=2, col=1)
-                fig.update_yaxes(title_text="Price ($)", row=1, col=1)
-                fig.update_yaxes(title_text="Volume", row=2, col=1)
-                
-                st.plotly_chart(fig, use_container_width=True)
-                
-                # Technical Indicators
-                st.markdown("#### Technical Indicators")
-                
-                col1, col2, col3, col4 = st.columns(4)
-                
-                current_price = history['Close'].iloc[-1]
-                sma_20 = history['SMA_20'].iloc[-1]
-                sma_50 = history['SMA_50'].iloc[-1]
-                sma_200 = history['SMA_200'].iloc[-1]
-                
-                with col1:
-                    trend = "Bullish" if current_price > sma_20 > sma_50 else "Bearish" if current_price < sma_20 < sma_50 else "Neutral"
-                    st.metric("Trend", trend)
-                with col2:
-                    st.metric("vs SMA 20", f"{(current_price/sma_20-1)*100:+.2f}%")
-                with col3:
-                    st.metric("vs SMA 50", f"{(current_price/sma_50-1)*100:+.2f}%")
-                with col4:
-                    st.metric("vs SMA 200", f"{(current_price/sma_200-1)*100:+.2f}%")
-                
-                # Returns Analysis
-                st.markdown("---")
-                st.markdown("#### Returns Analysis")
-                
-                returns_1m = (history['Close'].iloc[-1] / history['Close'].iloc[-21] - 1) * 100 if len(history) > 21 else 0
-                returns_3m = (history['Close'].iloc[-1] / history['Close'].iloc[-63] - 1) * 100 if len(history) > 63 else 0
-                returns_6m = (history['Close'].iloc[-1] / history['Close'].iloc[-126] - 1) * 100 if len(history) > 126 else 0
-                returns_1y = (history['Close'].iloc[-1] / history['Close'].iloc[-252] - 1) * 100 if len(history) > 252 else 0
-                returns_ytd = (history['Close'].iloc[-1] / history['Close'].iloc[0] - 1) * 100
-                
-                col1, col2, col3, col4, col5 = st.columns(5)
-                with col1:
-                    st.metric("1 Month", f"{returns_1m:+.2f}%")
-                with col2:
-                    st.metric("3 Months", f"{returns_3m:+.2f}%")
-                with col3:
-                    st.metric("6 Months", f"{returns_6m:+.2f}%")
-                with col4:
-                    st.metric("1 Year", f"{returns_1y:+.2f}%")
-                with col5:
-                    st.metric("YTD", f"{returns_ytd:+.2f}%")
-    
+                if period == "5y": # Only show 200 on long charts
+                    fig.add_trace(go.Scatter(x=chart_data.index, y=chart_data['SMA_200'], 
+                                             name='SMA 200', line=dict(color='#E11D48', width=2)), row=1, col=1)
+
+            if show_bb:
+                fig.add_trace(go.Scatter(x=chart_data.index, y=chart_data['BB_Upper'], 
+                                         name='BB Upper', line=dict(color='#94A3B8', width=1, dash='dash')), row=1, col=1)
+                fig.add_trace(go.Scatter(x=chart_data.index, y=chart_data['BB_Lower'], 
+                                         name='BB Lower', line=dict(color='#94A3B8', width=1, dash='dash'),
+                                         fill='tonexty', fillcolor='rgba(148, 163, 184, 0.1)'), row=1, col=1)
+
+            # Volume
+            colors = ['#10B981' if chart_data['Close'].iloc[i] >= chart_data['Open'].iloc[i] 
+                      else '#EF4444' for i in range(len(chart_data))]
+            fig.add_trace(go.Bar(x=chart_data.index, y=chart_data['Volume'], 
+                                 name='Volume', marker_color=colors, showlegend=False), row=1, col=1)
+            fig.update_yaxes(title_text="Price", row=1, col=1)
+            
+            # --- Add Oscillator Panes ---
+            current_row = 2
+            if show_rsi:
+                fig.add_trace(go.Scatter(x=chart_data.index, y=chart_data['RSI'], 
+                                         name='RSI', line=dict(color='#0EA5E9', width=1)), 
+                              row=current_row, col=1)
+                fig.add_hline(y=70, line_dash="dash", line_color="#94A3B8", row=current_row, col=1)
+                fig.add_hline(y=30, line_dash="dash", line_color="#94A3B8", row=current_row, col=1)
+                fig.update_yaxes(title_text="RSI", range=[0, 100], row=current_row, col=1)
+                current_row += 1
+            
+            if show_macd:
+                fig.add_trace(go.Scatter(x=chart_data.index, y=chart_data['MACD'], 
+                                         name='MACD', line=dict(color='#0EA5E9', width=1)), 
+                              row=current_row, col=1)
+                fig.add_trace(go.Scatter(x=chart_data.index, y=chart_data['MACD_Signal'], 
+                                         name='Signal', line=dict(color='#F59E0B', width=1)), 
+                              row=current_row, col=1)
+                hist_colors = ['#10B981' if v > 0 else '#EF4444' for v in chart_data['MACD_Hist']]
+                fig.add_trace(go.Bar(x=chart_data.index, y=chart_data['MACD_Hist'], 
+                                     name='Histogram', marker_color=hist_colors), 
+                              row=current_row, col=1)
+                fig.update_yaxes(title_text="MACD", row=current_row, col=1)
+                current_row += 1
+
+            fig.update_layout(
+                template="plotly_dark",
+                plot_bgcolor="#0F172A",
+                paper_bgcolor="#0F172A",
+                height=800,
+                xaxis_rangeslider_visible=False,
+                hovermode='x unified',
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+            )
+            fig.update_xaxes(showticklabels=True, row=rows, col=1) # Only show bottom x-axis labels
+            
+            st.plotly_chart(fig, use_container_width=True)
+
+        # --- TAB 5: NEW FINANCIAL NEWS ---
+        with tab5:
+            st.markdown("### Latest Financial News")
+            
+            news = data.get('news')
+            
+            if not news:
+                st.info("No recent news found for this ticker.")
+            else:
+                for article in news:
+                    title = article.get('title')
+                    link = article.get('link')
+                    publisher = article.get('publisher')
+                    time = datetime.fromtimestamp(article.get('providerPublishTime')).strftime('%Y-%m-%d %H:%M')
+                    
+                    st.markdown(f"""
+                        <div class='news-article'>
+                            <div class='news-title'><a href='{link}' target='_blank'>{title}</a></div>
+                            <div class='news-publisher'>{publisher} • {time}</div>
+                        </div>
+                    """, unsafe_allow_html=True)
+
     else:
         # Landing Page
         st.markdown("""
@@ -1371,8 +1532,8 @@ def main():
                 <div class='metric-card' style='text-align: center;'>
                     <h3 style='color: #0EA5E9;'>DCF Valuation</h3>
                     <p style='color: #94A3B8;'>
-                        2-Stage Enterprise Value DCF with calculated WACC, sensitivity analysis, 
-                        and scenario modeling
+                        2-Stage Enterprise Value DCF with calculated WACC, smart growth defaults, 
+                        and sensitivity analysis
                     </p>
                 </div>
             """, unsafe_allow_html=True)
