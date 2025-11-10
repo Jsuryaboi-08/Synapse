@@ -3,1560 +3,960 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
-from datetime import datetime, timedelta
-from scipy import stats
+import plotly.figure_factory as ff
+from datetime import datetime
+import time
 
-# Page Configuration
-st.set_page_config(
-    page_title="Risk-Adjusted Analyst Pro",
-    page_icon="📈",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
+# ---
+# CRITICAL: TA-Lib Installation
+# This library is required for pattern recognition. It can be difficult to install.
+# 1. On Windows: Try 'pip install ta-lib-binary'
+# 2. On Mac/Linux: You may need to install the C-library first:
+#    - Mac: 'brew install ta-lib'
+#    - Linux: 'sudo apt-get install libta-lib-dev'
+#    - THEN: 'pip install TA-Lib'
+# If installation fails, you can comment out the 'import talib' line
+# and the 'plot_candlestick_patterns' function call to run the rest of the app.
+try:
+    import talib
+    TALIB_LOADED = True
+except ImportError:
+    TALIB_LOADED = False
+    # Don't st.error here, do it in the main app body if needed
+    pass
 
-# --- Professional Dark Theme Styling ---
-st.markdown("""
+# ---
+# PAGE CONFIGURATION & STYLING
+# ---
+
+# Set the layout to "wide" for a more professional, dense feel like the reference
+st.set_page_config(layout="wide", page_title="Risk-Adjusted Analyst", page_icon="📈")
+
+# Custom CSS to mimic the reference UI (dark, clean, professional)
+def load_css():
+    st.markdown("""
     <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap');
+    /* Google Font for clean text */
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
     
-    body {
+    html, body, [class*="st-"] {
         font-family: 'Inter', sans-serif;
     }
     
+    /* Main app background */
     .stApp {
-        background-color: #0F172A; /* Main dark background */
-        color: #E2E8F0;
+        background-color: #0b0c0e; /* Even darker background */
+        color: #FAFAFA;
     }
-    
-    /* Main header */
-    .premium-header {
-        background-color: #1E293B; /* Slightly lighter card background */
-        padding: 25px;
-        border-radius: 10px;
-        border: 1px solid #334155;
-        margin-bottom: 20px;
-    }
-    
-    h1, h2, h3 {
-        color: #FFFFFF;
-        font-weight: 700;
-    }
-    
-    /* Custom metric cards */
-    .metric-card {
-        background-color: #1E293B;
-        padding: 20px;
-        border-radius: 10px;
-        border: 1px solid #334155;
-        transition: transform 0.2s;
-        height: 100%; /* Ensure cards in a row are same height */
-    }
-    
-    .metric-card:hover {
-        transform: translateY(-3px);
-        border-color: #0EA5E9; /* Accent color on hover */
-    }
-    
-    /* Tabs styling */
-    .stTabs [data-baseweb="tab-list"] {
-        gap: 8px;
-        background-color: transparent;
-    }
-    
-    .stTabs [data-baseweb="tab"] {
-        background-color: #1E293B;
-        border-radius: 8px;
-        padding: 10px 20px;
-        border: 1px solid #334155;
-        color: #94A3B8; /* Muted tab text */
-        font-weight: 600;
-    }
-    
-    .stTabs [aria-selected="true"] {
-        background-color: #0EA5E9; /* Accent color */
-        color: #FFFFFF;
-        border: 1px solid #0EA5E9;
-    }
-    
-    /* Risk badges */
-    .risk-badge {
-        color: white;
-        padding: 6px 16px;
-        border-radius: 20px;
-        font-size: 12px;
-        font-weight: 600;
-        display: inline-block;
-        margin-top: 10px;
-    }
-    .risk-badge-safe { background-color: #10B981; }
-    .risk-badge-warning { background-color: #F59E0B; }
-    .risk-badge-danger { background-color: #EF4444; }
-    
-    /* Standard Streamlit Metric */
-    .stMetric {
-        background-color: #1E293B;
-        border: 1px solid #334155;
-        border-radius: 10px;
-        padding: 15px;
-    }
-    
-    .stMetric label {
-        color: #94A3B8 !important; /* Muted label */
-        font-size: 14px !important;
-    }
-    
-    .stMetric [data-testid="stMetricValue"] {
-        color: #FFFFFF !important;
-        font-size: 26px !important;
-        font-weight: 700 !important;
-    }
-    
-    /* Expander */
-    div[data-testid="stExpander"] {
-        background-color: #1E293B;
-        border: 1px solid #334155;
-        border-radius: 10px;
-    }
-    
-    /* Insight box */
-    .insight-box {
-        background-color: #1E293B;
-        padding: 20px;
-        border-radius: 10px;
-        border-left: 4px solid #0EA5E9; /* Accent color */
-        margin: 10px 0;
-    }
-    
+
     /* Sidebar */
     [data-testid="stSidebar"] {
-        background-color: #1E293B;
-        border-right: 1px solid #334155;
+        background-color: #121417; /* Dark sidebar */
+        border-right: 1px solid #2D2D2D;
     }
-    
-    .stButton > button {
-        border-radius: 8px;
-        border: 1px solid #334155;
+    .st-sidebar .st-emotion-cache-16txtl3 { /* Sidebar title */
+        font-weight: 700;
+        font-size: 1.75rem;
     }
-    
-    .stButton > button[kind="primary"] {
-        background-color: #0EA5E9;
-        color: #FFFFFF;
-        border: 1px solid #0EA5E9;
+
+    /* Main content area */
+    .main .block-container {
+        padding-top: 2rem;
+        padding-bottom: 2rem;
+        padding-left: 3rem;
+        padding-right: 3rem;
     }
-    
-    .stButton > button[kind="primary"]:hover {
-        background-color: #0B8DC1;
-        border: 1px solid #0B8DC1;
+
+    /* Metric cards (like your reference) */
+    [data-testid="stMetric"] {
+        background-color: #121417; /* Dark card background */
+        border: 1px solid #2D2D2D;
+        border-radius: 12px;
+        padding: 1.25rem;
     }
-    
-    /* News Article Styling */
-    .news-article {
-        background-color: #1E293B;
-        border: 1px solid #334155;
-        border-radius: 8px;
-        padding: 15px;
-        margin-bottom: 10px;
+    [data-testid="stMetric"] > label {
+        color: #A0A0A0; /* Lighter label text */
+        font-weight: 500;
     }
-    .news-title a {
-        color: #E2E8F0;
+    [data-testid="stMetric"] > div[data-testid="metric-value"] {
+        font-size: 2rem;
         font-weight: 600;
-        font-size: 1.1rem;
-        text-decoration: none;
     }
-    .news-title a:hover {
-        color: #0EA5E9;
+
+    /* Buttons */
+    .stButton > button {
+        background-color: #00A89C; /* A professional teal accent */
+        color: white;
+        border-radius: 8px;
+        font-weight: 600;
+        padding: 0.5rem 1rem;
+        width: 100%;
     }
-    .news-publisher {
-        color: #94A3B8;
+    .stButton > button:hover {
+        background-color: #007A70;
+        color: white;
+    }
+    
+    /* Sidebar Radio Navigation (to mimic reference) */
+    .stRadio [data-baseweb="radio"] {
+        background-color: #121417;
+        border-radius: 8px;
+        padding: 0.75rem 1rem;
+        margin-bottom: 0.5rem;
+    }
+    .stRadio [data-baseweb="radio"] label {
+        color: #A0A0A0;
+        font-weight: 500;
+    }
+    /* Selected radio item */
+    .stRadio [data-baseweb="radio"] input:checked + div {
+        background-color: #00A89C !important;
+        color: white;
+    }
+    .stRadio [data-baseweb="radio"] input:checked + div label {
+        color: white;
+        font-weight: 600;
+    }
+
+    /* Reference-style DCF Table */
+    .dcf-table {
+        font-family: 'Inter', sans-serif;
+        width: 100%;
+        border-collapse: collapse;
         font-size: 0.9rem;
     }
+    .dcf-table th, .dcf-table td {
+        border-top: 1px solid #2D2D2D;
+        border-bottom: 1px solid #2D2D2D;
+        padding: 12px 14px;
+        text-align: right;
+        white-space: nowrap;
+    }
+    .dcf-table th {
+        background-color: #121417;
+        color: #A0A0A0;
+        font-weight: 600;
+        text-align: right;
+    }
+    .dcf-table th:first-child {
+        text-align: left;
+    }
+    .dcf-table td:first-child {
+        text-align: left;
+        font-weight: 600;
+        color: #FAFAFA;
+    }
+    .dcf-table tr:nth-child(even) {
+        background-color: #121417;
+    }
+    /* Highlight bold rows like reference */
+    .dcf-table .highlight-row td {
+        font-weight: 700 !important;
+        color: #FFFFFF !important;
+    }
+    .dcf-table .spacer-row td {
+        padding: 8px;
+        border: none;
+    }
+
+    /* Custom Valuation Summary Boxes */
+    .summary-box {
+        background-color: #121417;
+        border: 1px solid #2D2D2D;
+        border-radius: 12px;
+        padding: 1.5rem;
+    }
+    .summary-box h4 {
+        margin-bottom: 1.5rem;
+        font-weight: 600;
+    }
+    .summary-box .price-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 0.75rem;
+    }
+    .summary-box .price-label {
+        font-size: 1rem;
+        color: #A0A0A0;
+    }
+    .summary-box .price-value {
+        font-size: 1.1rem;
+        font-weight: 600;
+        color: #FAFAFA;
+    }
+    .summary-box .upside-bar {
+        width: 100%;
+        height: 10px;
+        background-color: #2D2D2D;
+        border-radius: 5px;
+        margin-top: 1.25rem;
+        margin-bottom: 0.5rem;
+    }
+    .summary-box .upside-fill {
+        height: 10px;
+        border-radius: 5px;
+    }
+    .summary-box .upside-text {
+        font-size: 1.25rem;
+        font-weight: 700;
+        text-align: center;
+    }
     </style>
-""", unsafe_allow_html=True)
-
-# --- Utility Functions ---
-
-@st.cache_data(ttl=3600)
-def fetch_company_data(ticker):
-    """Fetch comprehensive company data from yfinance"""
-    try:
-        stock = yf.Ticker(ticker)
-        info = stock.info
-        financials = stock.financials
-        balance_sheet = stock.balance_sheet
-        cashflow = stock.cashflow
-        history = stock.history(period="5y") # Get 5 years for TA
-        quarterly_financials = stock.quarterly_financials
-        
-        # Check for essential data
-        if financials.empty or balance_sheet.empty or cashflow.empty:
-            st.error(f"Incomplete financial data for {ticker}. DCF and ratio analysis may fail.")
-            
-        return {
-            'info': info,
-            'financials': financials.to_dict() if not financials.empty else {},
-            'balance_sheet': balance_sheet.to_dict() if not balance_sheet.empty else {},
-            'cashflow': cashflow.to_dict() if not cashflow.empty else {},
-            'history': history, # Return DataFrame for easier handling
-            'quarterly_financials': quarterly_financials.to_dict() if not quarterly_financials.empty else {},
-            'news': stock.news, # NEW: Get company news
-            'ticker': ticker
-        }
-    except Exception as e:
-        st.error(f"Error fetching data for {ticker}: {str(e)}")
-        return None
-
-@st.cache_data(ttl=3600)
-def get_risk_free_rate():
-    """Fetch 10-Year Treasury yield as risk-free rate"""
-    try:
-        tnx = yf.Ticker("^TNX")
-        history = tnx.history(period="5d") # Get 5 days to ensure we get last closing price
-        if not history.empty:
-            return history['Close'].iloc[-1] / 100  # Convert percentage to decimal
-        else:
-            return 0.04  # Fallback
-    except Exception:
-        return 0.04 # Fallback
-
-def get_financial_item(df, keys, year=0):
-    """
-    Safely get a financial item from a DataFrame by checking multiple possible keys.
-    Returns None if no key is found or value is NaN.
-    """
-    if df.empty or year >= len(df.columns):
-        return None
-    for key in keys:
-        if key in df.index:
-            value = df.loc[key].iloc[year]
-            return value if pd.notna(value) else None
-    return None # None of the keys were found
-
-def calculate_advanced_ratios(data):
-    """Calculate comprehensive set of financial ratios with trend analysis"""
-    try:
-        info = data['info']
-        financials = pd.DataFrame(data['financials'])
-        balance_sheet = pd.DataFrame(data['balance_sheet'])
-        cashflow = pd.DataFrame(data['cashflow'])
-        
-        if financials.empty or balance_sheet.empty or cashflow.empty:
-            return {} # Not enough data
-            
-        latest_financials = financials.iloc[:, 0]
-        latest_balance = balance_sheet.iloc[:, 0]
-        latest_cf = cashflow.iloc[:, 0]
-        
-        ratios = {}
-        
-        # Profitability Ratios
-        revenue = get_financial_item(financials, ['Total Revenue'], year=0) or 0
-        gross_profit = get_financial_item(financials, ['Gross Profit'], year=0) or 0
-        ebit = get_financial_item(financials, ['EBIT'], year=0) or 0
-        net_income = get_financial_item(financials, ['Net Income'], year=0) or 0
-        
-        ratios['Gross Margin'] = (gross_profit / revenue * 100) if revenue > 0 else info.get('grossMargins', 0) * 100
-        ratios['EBIT Margin'] = (ebit / revenue * 100) if revenue > 0 else info.get('operatingMargins', 0) * 100
-        ratios['Net Margin'] = (net_income / revenue * 100) if revenue > 0 else info.get('profitMargins', 0) * 100
-        ratios['ROE'] = info.get('returnOnEquity', 0) * 100
-        ratios['ROA'] = info.get('returnOnAssets', 0) * 100
-        
-        # ROIC Calculation
-        total_debt = get_financial_item(balance_sheet, ['Total Debt', 'Total Debt Net Minority Interest'], year=0) or 0
-        equity = get_financial_item(balance_sheet, ['Stockholders Equity', 'Total Stockholder Equity'], year=0) or 0
-        invested_capital = total_debt + equity
-        tax_expense = get_financial_item(financials, ['Income Tax Expense', 'Tax Provision'], year=0) or 0
-        income_before_tax = get_financial_item(financials, ['Income Before Tax', 'Pretax Income'], year=0) or 1
-        tax_rate = (tax_expense / income_before_tax) if income_before_tax > 0 else 0.21
-        nopat = ebit * (1 - tax_rate)
-        ratios['ROIC'] = (nopat / invested_capital * 100) if invested_capital > 0 else 0
-        
-        # Liquidity Ratios
-        current_assets = get_financial_item(balance_sheet, ['Current Assets'], year=0) or 0
-        current_liabilities = get_financial_item(balance_sheet, ['Current Liabilities'], year=0) or 1
-        inventory = get_financial_item(balance_sheet, ['Inventory'], year=0) or 0
-        
-        ratios['Current Ratio'] = current_assets / current_liabilities if current_liabilities > 0 else 0
-        ratios['Quick Ratio'] = (current_assets - inventory) / current_liabilities if current_liabilities > 0 else 0
-        
-        # Leverage Ratios
-        cash = get_financial_item(balance_sheet, ['Cash And Cash Equivalents', 'Cash'], year=0) or 0
-        ratios['Net Debt'] = (total_debt - cash) / 1e9
-        ratios['Debt/Equity'] = (total_debt / equity * 100) if equity > 0 else 0
-        total_assets = get_financial_item(balance_sheet, ['Total Assets'], year=0) or 1
-        ratios['Debt/Assets'] = (total_debt / total_assets * 100)
-        interest_expense = get_financial_item(financials, ['Interest Expense'], year=0) or 0
-        ratios['Interest Coverage'] = (ebit / abs(interest_expense)) if interest_expense != 0 else 0
-        
-        # Efficiency Ratios
-        cogs = get_financial_item(financials, ['Cost Of Revenue', 'Cost Of Goods Sold'], year=0) or 0
-        receivables = get_financial_item(balance_sheet, ['Accounts Receivable'], year=0) or 0
-        payables = get_financial_item(balance_sheet, ['Accounts Payable'], year=0) or 0
-        
-        ratios['DIO'] = (inventory / cogs * 365) if cogs > 0 else 0
-        ratios['DSO'] = (receivables / revenue * 365) if revenue > 0 else 0
-        ratios['DPO'] = (payables / cogs * 365) if cogs > 0 else 0
-        ratios['Cash Conversion Cycle'] = ratios['DIO'] + ratios['DSO'] - ratios['DPO']
-        ratios['Asset Turnover'] = revenue / total_assets
-        
-        # Cash Flow Ratios
-        operating_cf = get_financial_item(cashflow, ['Operating Cash Flow', 'Total Cash From Operating Activities'], year=0) or 0
-        capex = abs(get_financial_item(cashflow, ['Capital Expenditure', 'CapEx'], year=0) or 0)
-        fcf = operating_cf - capex # This is FCFE
-        
-        ratios['FCF'] = fcf / 1e9
-        ratios['FCF Margin'] = (fcf / revenue * 100) if revenue > 0 else 0
-        ratios['OCF/Net Income'] = (operating_cf / net_income) if net_income != 0 else 0
-        
-        # Altman Z-Score (Enhanced)
-        retained_earnings = get_financial_item(balance_sheet, ['Retained Earnings'], year=0) or 0
-        market_cap = info.get('marketCap', 0)
-        total_liabilities = get_financial_item(balance_sheet, ['Total Liabilities Net Minority Interest'], year=0) or 1
-        
-        if total_assets > 0:
-            x1 = (current_assets - current_liabilities) / total_assets
-            x2 = retained_earnings / total_assets
-            x3 = ebit / total_assets
-            x4 = market_cap / total_liabilities if total_liabilities > 0 else 0
-            x5 = revenue / total_assets
-            
-            ratios['Altman Z-Score'] = 1.2*x1 + 1.4*x2 + 3.3*x3 + 0.6*x4 + 1.0*x5
-        else:
-            ratios['Altman Z-Score'] = 0
-        
-        # Piotroski F-Score
-        ratios['Piotroski F-Score'] = calculate_piotroski_score(data)
-        
-        # Valuation Ratios
-        ratios['P/E'] = info.get('trailingPE', 0)
-        ratios['Forward P/E'] = info.get('forwardPE', 0)
-        ratios['PEG'] = info.get('pegRatio', 0)
-        ratios['P/B'] = info.get('priceToBook', 0)
-        ratios['EV/EBITDA'] = info.get('enterpriseToEbitda', 0)
-        
-        return ratios
-    except Exception as e:
-        # st.error(f"Error calculating ratios: {str(e)}") # Can be noisy
-        return {}
-
-def calculate_piotroski_score(data):
-    """Calculate Piotroski F-Score (0-9 scale)"""
-    try:
-        financials = pd.DataFrame(data['financials'])
-        balance_sheet = pd.DataFrame(data['balance_sheet'])
-        cashflow = pd.DataFrame(data['cashflow'])
-        
-        if financials.empty or balance_sheet.empty or cashflow.empty or len(financials.columns) < 2:
-            return 0
-        
-        score = 0
-        
-        # --- Profitability (4 points) ---
-        net_income = get_financial_item(financials, ['Net Income'], year=0) or 0
-        score += 1 if net_income > 0 else 0
-        
-        ocf = get_financial_item(cashflow, ['Operating Cash Flow', 'Total Cash From Operating Activities'], year=0) or 0
-        score += 1 if ocf > 0 else 0
-        score += 1 if ocf > net_income else 0
-        
-        assets_0 = get_financial_item(balance_sheet, ['Total Assets'], year=0) or 1
-        assets_1 = get_financial_item(balance_sheet, ['Total Assets'], year=1) or 1
-        net_income_1 = get_financial_item(financials, ['Net Income'], year=1) or 0
-        roa_current = net_income / assets_0
-        roa_previous = net_income_1 / assets_1
-        score += 1 if roa_current > roa_previous else 0
-        
-        # --- Leverage (3 points) ---
-        debt_ratio_current = (get_financial_item(balance_sheet, ['Total Debt'], year=0) or 0) / assets_0
-        debt_ratio_previous = (get_financial_item(balance_sheet, ['Total Debt'], year=1) or 0) / assets_1
-        score += 1 if debt_ratio_current < debt_ratio_previous else 0
-        
-        cr_0 = (get_financial_item(balance_sheet, ['Current Assets'], year=0) or 0) / (get_financial_item(balance_sheet, ['Current Liabilities'], year=0) or 1)
-        cr_1 = (get_financial_item(balance_sheet, ['Current Assets'], year=1) or 0) / (get_financial_item(balance_sheet, ['Current Liabilities'], year=1) or 1)
-        score += 1 if cr_0 > cr_1 else 0
-        
-        equity_0 = get_financial_item(balance_sheet, ['Stockholders Equity'], year=0) or 0
-        equity_1 = get_financial_item(balance_sheet, ['Stockholders Equity'], year=1) or 0
-        score += 1 if equity_0 >= equity_1 else 0 # Simple check
-            
-        # --- Operating Efficiency (2 points) ---
-        rev_0 = get_financial_item(financials, ['Total Revenue'], year=0) or 1
-        rev_1 = get_financial_item(financials, ['Total Revenue'], year=1) or 1
-        gm_current = (get_financial_item(financials, ['Gross Profit'], year=0) or 0) / rev_0
-        gm_previous = (get_financial_item(financials, ['Gross Profit'], year=1) or 0) / rev_1
-        score += 1 if gm_current > gm_previous else 0
-        
-        asset_turnover_current = rev_0 / assets_0
-        asset_turnover_previous = rev_1 / assets_1
-        score += 1 if asset_turnover_current > asset_turnover_previous else 0
-        
-        return score
-    except:
-        return 0
-
-def monte_carlo_simulation(current_price, volatility, drift, days, simulations=10000):
-    """Enhanced Monte Carlo with drift consideration"""
-    dt = 1/252
-    
-    price_paths = np.zeros((simulations, days))
-    price_paths[:, 0] = current_price
-    
-    for t in range(1, days):
-        random_shock = np.random.normal(0, 1, simulations)
-        price_paths[:, t] = price_paths[:, t-1] * np.exp(
-            (drift - 0.5 * volatility**2) * dt + volatility * np.sqrt(dt) * random_shock
-        )
-    
-    return price_paths
-
-def calculate_var_cvar(returns, confidence=0.95):
-    """Calculate Value at Risk and Conditional Value at Risk"""
-    var = np.percentile(returns, (1 - confidence) * 100)
-    cvar = returns[returns <= var].mean()
-    return var, cvar
-
-def calculate_sharpe_sortino(returns, risk_free_rate=0.02):
-    """Calculate Sharpe and Sortino ratios"""
-    excess_returns = returns - risk_free_rate/252
-    sharpe = np.sqrt(252) * excess_returns.mean() / returns.std() if returns.std() > 0 else 0
-    
-    downside_returns = returns[returns < 0]
-    downside_std = downside_returns.std() if len(downside_returns) > 0 else returns.std()
-    sortino = np.sqrt(252) * excess_returns.mean() / downside_std if downside_std > 0 else 0
-    
-    return sharpe, sortino
-
-# --- NEW: Advanced DCF Functions ---
-
-# NEW: Helper to calculate historical CAGR
-def calculate_cagr(data, years=5):
-    """Calculates historical revenue CAGR"""
-    try:
-        financials = pd.DataFrame(data['financials'])
-        if financials.empty or len(financials.columns) < years:
-            return 0.05 # Fallback
-        
-        start_revenue = get_financial_item(financials, ['Total Revenue'], year=years-1)
-        end_revenue = get_financial_item(financials, ['Total Revenue'], year=0)
-        
-        if start_revenue and end_revenue and start_revenue > 0:
-            cagr = (end_revenue / start_revenue)**(1/(years-1)) - 1
-            return max(0, cagr) # Don't allow negative default growth
-        return 0.05 # Fallback
-    except Exception:
-        return 0.05 # Fallback
-
-def calculate_wacc(data, rfr, market_premium):
-    """Calculates WACC from company data using the safe getter"""
-    try:
-        info = data['info']
-        financials = pd.DataFrame(data['financials'])
-        balance_sheet = pd.DataFrame(data['balance_sheet'])
-        
-        if financials.empty or balance_sheet.empty:
-            return None, "Missing financial data for WACC"
-
-        # Cost of Equity (Re) using CAPM
-        beta = info.get('beta')
-        if beta is None:
-            return None, "Beta not available."
-        Re = rfr + beta * market_premium
-
-        # Cost of Debt (Rd)
-        interest_expense = get_financial_item(financials, ['Interest Expense'], year=0) or 0
-        total_debt = get_financial_item(balance_sheet, ['Total Debt', 'Total Debt Net Minority Interest'], year=0) or 0
-        
-        # Handle cases where interest expense is positive or zero
-        Rd = abs(interest_expense) / total_debt if total_debt > 0 and interest_expense != 0 else rfr + 0.02 # Proxy if no debt/interest
-
-        # Tax Rate (T)
-        income_before_tax = get_financial_item(financials, ['Income Before Tax', 'Pretax Income'], year=0)
-        income_tax = get_financial_item(financials, ['Income Tax Expense', 'Tax Provision'], year=0)
-        
-        if income_before_tax and income_tax and income_before_tax > 0:
-            tax_rate = (income_tax / income_before_tax)
-        else:
-            tax_rate = 0.21 # Fallback to 21%
-
-        # Market Values (E, D, V)
-        E = info.get('marketCap')
-        if E is None:
-            return None, "Market Cap not available."
-        D = total_debt # Use book value of debt as proxy for market value
-        V = E + D
-        
-        if V == 0:
-            return None, "Cannot calculate E/V and D/V as V is zero."
-
-        # WACC
-        wacc = (E/V * Re) + (D/V * Rd * (1 - tax_rate))
-        
-        wacc_details = {
-            "Cost of Equity (Re)": Re,
-            "Cost of Debt (Rd)": Rd,
-            "Beta": beta,
-            "Tax Rate": tax_rate,
-            "Market Cap (E)": E,
-            "Total Debt (D)": D,
-            "E/V": E/V,
-            "D/V": D/V,
-            "WACC": wacc
-        }
-        
-        return wacc, wacc_details
-        
-    except Exception as e:
-        return None, f"WACC Error: {str(e)}"
-
-def calculate_dcf_valuation_advanced(data, wacc, g_5y, g_10y, g_t):
-    """
-    Advanced 2-Stage Enterprise Value DCF Model
-    Calculates FCFF from components: EBIT, Tax, D&A, NWC, CapEx
-    """
-    try:
-        info = data['info']
-        financials = pd.DataFrame(data['financials'])
-        balance_sheet = pd.DataFrame(data['balance_sheet'])
-        cashflow = pd.DataFrame(data['cashflow'])
-        
-        if financials.empty or balance_sheet.empty or cashflow.empty or len(balance_sheet.columns) < 2:
-            st.error("DCF requires at least 2 years of historical data.")
-            return None
-
-        # --- 1. Calculate Base Year (T=0) FCFF ---
-        
-        # NOPAT = EBIT * (1 - Tax Rate)
-        ebit = get_financial_item(financials, ['EBIT'], year=0)
-        tax_expense = get_financial_item(financials, ['Income Tax Expense', 'Tax Provision'], year=0)
-        income_before_tax = get_financial_item(financials, ['Income Before Tax', 'Pretax Income'], year=0)
-
-        # Check for missing data for tax rate
-        if tax_expense is not None and income_before_tax is not None and income_before_tax > 0:
-            tax_rate = (tax_expense / income_before_tax)
-        else:
-            tax_rate = 0.21 # Fallback
-        
-        if ebit is None:
-            st.error("Error in DCF calculation: Could not find 'EBIT'.")
-            return None
-            
-        nopat = ebit * (1 - tax_rate)
-
-        # Net Investment = (CapEx - D&A) + (Change in NWC)
-        capex = get_financial_item(cashflow, ['Capital Expenditure', 'CapEx'], year=0)
-        d_and_a = get_financial_item(cashflow, ['Depreciation And Amortization', 'Depreciation'], year=0)
-
-        if capex is None:
-            st.error("Error in DCF calculation: Could not find 'Capital Expenditure'.")
-            return None
-        if d_and_a is None:
-            st.error("Error in DCF calculation: Could not find 'Depreciation And Amortization'.")
-            return None
-            
-        capex = abs(capex) # Make sure it's positive
-
-        # Change in Net Working Capital (NWC)
-        # NWC = (Current Assets - Cash) - (Current Liabilities - Short-Term Debt)
-        def get_nwc(col):
-            ca = get_financial_item(balance_sheet, ['Current Assets'], year=col)
-            cash = get_financial_item(balance_sheet, ['Cash And Cash Equivalents', 'Cash'], year=col)
-            cl = get_financial_item(balance_sheet, ['Current Liabilities'], year=col)
-            std = get_financial_item(balance_sheet, ['Short Term Debt', 'Short Long Term Debt'], year=col) or 0 # Default to 0 if None
-            
-            # Check for critical missing NWC components
-            if ca is None: raise ValueError("Missing 'Current Assets' for NWC calc.")
-            if cash is None: raise ValueError("Missing 'Cash' for NWC calc.")
-            if cl is None: raise ValueError("Missing 'Current Liabilities' for NWC calc.")
-            
-            return (ca - cash) - (cl - std)
-
-        nwc_0 = get_nwc(0) # Most recent year
-        nwc_1 = get_nwc(1) # Prior year
-        change_nwc = nwc_0 - nwc_1
-
-        # Base FCFF
-        fcff_0 = nopat + d_and_a - capex - change_nwc
-        
-        if fcff_0 <= 0:
-            st.warning(f"Base year FCFF is negative (${fcff_0/1e6:,.2f}M). DCF model may be unreliable, but proceeding.")
-        
-        # --- 2. Project FCFF for 10 Years (2-Stage) ---
-        projected_fcf = []
-        last_fcff = fcff_0
-        
-        # Stage 1: Years 1-5 (High Growth)
-        for year in range(1, 6):
-            fcf = last_fcff * (1 + g_5y)
-            projected_fcf.append(fcf)
-            last_fcff = fcf
-            
-        # Stage 2: Years 6-10 (Transitional Growth)
-        for year in range(1, 6):
-            fcf = last_fcff * (1 + g_10y)
-            projected_fcf.append(fcf)
-            last_fcff = fcf
-
-        # --- 3. Calculate Terminal Value (Gordon Growth) ---
-        # TV = FCFF_10 * (1 + g_t) / (WACC - g_t)
-        if wacc <= g_t:
-            st.error(f"WACC ({wacc*100:.2f}%) must be greater than Terminal Growth Rate ({g_t*100:.2f}%).")
-            return None
-        
-        terminal_value = projected_fcf[-1] * (1 + g_t) / (wacc - g_t)
-
-        # --- 4. Discount Cash Flows to Present Value ---
-        pv_fcf = sum([cf / (1 + wacc)**i for i, cf in enumerate(projected_fcf, 1)])
-        pv_terminal = terminal_value / (1 + wacc)**10
-        
-        enterprise_value = pv_fcf + pv_terminal
-
-        # --- 5. Calculate Equity Value and Intrinsic Price ---
-        total_debt = get_financial_item(balance_sheet, ['Total Debt', 'Total Debt Net Minority Interest'], year=0) or 0
-        cash = get_financial_item(balance_sheet, ['Cash And Cash Equivalents', 'Cash'], year=0) or 0
-        minority_interest = get_financial_item(balance_sheet, ['Minority Interest'], year=0) or 0
-        
-        equity_value = enterprise_value - total_debt + cash - minority_interest
-        
-        shares_outstanding = info.get('sharesOutstanding')
-        if not shares_outstanding or shares_outstanding == 0:
-            st.error("Shares Outstanding data is missing, cannot calculate per-share value.")
-            return None
-            
-        intrinsic_value_per_share = equity_value / shares_outstanding
-        
-        return {
-            'enterprise_value': enterprise_value,
-            'equity_value': equity_value,
-            'intrinsic_price': intrinsic_value_per_share,
-            'base_fcff': fcff_0,
-            'projected_fcf': projected_fcf,
-            'terminal_value': terminal_value,
-            'pv_fcf': pv_fcf,
-            'pv_terminal': pv_terminal
-        }
-    except Exception as e:
-        st.error(f"Error in DCF calculation: {str(e)}")
-        return None
-
-# --- Main Application ---
-def main():
-    # Header
-    st.markdown("""
-        <div class'premium-header'>
-            <h1 style='margin:0; background: linear-gradient(135deg, #0EA5E9 0%, #0B8DC1 100%); 
-                         -webkit-background-clip: text; -webkit-text-fill-color: transparent; 
-                         background-clip: text; font-size: 48px;'>
-                Risk-Adjusted Analyst Pro
-            </h1>
-            <p style='color: #94A3B8; margin-top: 10px; font-size: 18px;'>
-                Advanced Forward-Looking Valuation & Risk Analytics Platform
-            </p>
-        </div>
     """, unsafe_allow_html=True)
+
+load_css()
+
+# ---
+# DATA PULLING & CACHING
+# ---
+
+@st.cache_data
+def get_ticker_data(ticker):
+    """
+    Pulls all necessary yfinance data for a ticker.
+    This is our "heavy" initial data pull.
+    """
+    try:
+        tk = yf.Ticker(ticker)
+        # Prefetch all data to store in cache
+        data = {
+            "info": tk.info,
+            "history_1y": tk.history(period="1y"),
+            "history_5y": tk.history(period="5y"),
+            "financials": tk.financials,
+            "balance_sheet": tk.balance_sheet,
+            "cashflow": tk.cashflow,
+            "news": tk.news
+        }
+        # Check for empty data
+        if data["history_1y"].empty:
+            return None, f"No historical data found for ticker: {ticker}"
+        if not data["info"].get("shortName"):
+             return None, f"Ticker not found or info is missing: {ticker}"
+        return data, None
+    except Exception as e:
+        return None, f"An error occurred pulling data: {e}"
+
+# ---
+# CALCULATION FUNCTIONS (The "Advanced Analysis")
+# ---
+
+@st.cache_data
+def calculate_ratios(_data):
+    """Calculates all 8 key ratios."""
+    ratios = {}
+    try:
+        # Get data from cached object
+        info = _data["info"]
+        financials = _data["financials"]
+        balance_sheet = _data["balance_sheet"]
+        cashflow = _data["cashflow"]
+
+        # Get TTM data (most recent 4 quarters)
+        inc_ttm = financials.sum(axis=1)
+        bs_latest = balance_sheet.iloc[:, 0]
+        cf_ttm = cashflow.sum(axis=1)
+
+        # 1. Gross Margin
+        gross_profit = inc_ttm.get("Gross Profit", np.nan)
+        revenue = inc_ttm.get("Total Revenue", np.nan)
+        ratios["Gross Margin"] = gross_profit / revenue if revenue else np.nan
+
+        # 2. EBIT Margin
+        ebit = inc_ttm.get("EBIT", np.nan)
+        ratios["EBIT Margin"] = ebit / revenue if revenue else np.nan
+
+        # 3. ROE (Return on Equity)
+        net_income = inc_ttm.get("Net Income", np.nan)
+        equity = bs_latest.get("Total Stockholder Equity", np.nan)
+        ratios["ROE"] = net_income / equity if equity else np.nan
+
+        # 4. ROIC (Return on Invested Capital)
+        tax_provision = inc_ttm.get("Tax Provision", 0)
+        income_before_tax = inc_ttm.get("Income Before Tax", 1)
+        tax_rate = tax_provision / income_before_tax if income_before_tax else 0.21
+        nopat = ebit * (1 - tax_rate)
+        
+        long_term_debt = bs_latest.get("Long Term Debt", 0)
+        short_term_debt = bs_latest.get("Short Long Term Debt", 0)
+        cash = bs_latest.get("Cash And Cash Equivalents", 0)
+        
+        net_debt = long_term_debt + short_term_debt - cash
+        invested_capital = net_debt + equity
+        ratios["ROIC"] = nopat / invested_capital if invested_capital else np.nan
+
+        # 5. Net Debt
+        ratios["Net Debt"] = net_debt
+
+        # 6. Gearing (Net Debt / Equity)
+        ratios["Gearing"] = net_debt / equity if equity else np.nan
+
+        # 7. Working Capital Cycle (approximation)
+        receivables = bs_latest.get("Net Receivables", np.nan)
+        inventory = bs_latest.get("Inventory", np.nan)
+        payables = bs_latest.get("Accounts Payable", np.nan)
+        cogs = inc_ttm.get("Cost Of Revenue", np.nan)
+        
+        dso = (receivables / revenue) * 365 if revenue else np.nan
+        dio = (inventory / cogs) * 365 if cogs else np.nan
+        dpo = (payables / cogs) * 365 if cogs else np.nan
+        
+        ratios["WC Cycle (Days)"] = dso + dio - dpo
+
+        # 8. Altman Z-Score
+        wc = bs_latest.get("Total Current Assets", 0) - bs_latest.get("Total Current Liabilities", 0)
+        total_assets = bs_latest.get("Total Assets", 0)
+        re = bs_latest.get("Retained Earnings", 0)
+        mkt_cap = info.get("marketCap", 0)
+        total_liab = bs_latest.get("Total Liab", 0)
+        
+        A = wc / total_assets if total_assets else 0
+        B = re / total_assets if total_assets else 0
+        C = ebit / total_assets if total_assets else 0
+        D = mkt_cap / total_liab if total_liab else 0
+        E = revenue / total_assets if total_assets else 0
+        
+        ratios["Altman Z-Score"] = 1.2*A + 1.4*B + 3.3*C + 0.6*D + 1.0*E
+
+        return ratios
     
-    # Sidebar
-    with st.sidebar:
-        st.markdown("### Company Selection")
-        ticker = st.text_input("Enter Ticker Symbol", value="AAPL", placeholder="e.g., AAPL, MSFT, GOOGL").upper()
+    except Exception as e:
+        return {r: np.nan for r in ["Gross Margin", "EBIT Margin", "ROE", "ROIC", "Net Debt", "Gearing", "WC Cycle (Days)", "Altman Z-Score"]}
+
+@st.cache_data
+def run_monte_carlo(_data, simulations=10000, time_horizon_days=252):
+    """
+    Runs the 'heavy' Monte Carlo simulation.
+    """
+    try:
+        hist = _data["history_1y"]['Close']
+        log_returns = np.log(1 + hist.pct_change())
         
-        st.markdown("---")
-        st.markdown("### Analysis Settings")
+        u = log_returns.mean()
+        var = log_returns.var()
+        drift = u - (0.5 * var)
+        stdev = log_returns.std()
+        T = time_horizon_days
+        S0 = hist.iloc[-1]
         
-        analysis_depth = st.select_slider(
-            "Analysis Depth",
-            options=["Quick", "Standard", "Deep"],
-            value="Standard"
+        daily_returns = np.exp(drift + stdev * np.random.normal(0, 1, (T, simulations)))
+        price_paths = np.zeros_like(daily_returns)
+        price_paths[0] = S0
+        
+        for t in range(1, T):
+            price_paths[t] = price_paths[t-1] * daily_returns[t]
+            
+        ending_prices = price_paths[-1]
+        
+        prob_gain = (ending_prices > S0).sum() / simulations
+        prob_plus_10 = (ending_prices > (S0 * 1.10)).sum() / simulations
+        prob_minus_10 = (ending_prices < (S0 * 0.90)).sum() / simulations
+        
+        percentile_5 = np.percentile(ending_prices, 5)
+        var_95 = (S0 - percentile_5) / S0
+        cvar_95 = (S0 - ending_prices[ending_prices <= percentile_5].mean()) / S0
+
+        returns_pct = (ending_prices / S0) - 1
+        risk_free_rate = 0.04 # Assume 4% risk-free rate
+        
+        sharpe_ratio = (returns_pct.mean() - risk_free_rate) / returns_pct.std() if returns_pct.std() != 0 else np.nan
+        downside_returns = returns_pct[returns_pct < 0]
+        downside_std = downside_returns.std()
+        sortino_ratio = (returns_pct.mean() - risk_free_rate) / downside_std if downside_std != 0 else np.nan
+
+        return {
+            "price_paths": price_paths, "ending_prices": ending_prices, "S0": S0,
+            "prob_gain": prob_gain, "prob_plus_10": prob_plus_10, "prob_minus_10": prob_minus_10,
+            "var_95": var_95, "cvar_95": cvar_95, "sharpe_ratio": sharpe_ratio, "sortino_ratio": sortino_ratio
+        }
+    except Exception as e:
+        return None
+
+@st.cache_data
+def calculate_dcf_assumptions(_data):
+    """
+    NEW: Automatically calculates DCF assumptions, removing user input.
+    This adds "computational weight" and mimics professional platforms.
+    """
+    try:
+        financials = _data["financials"]
+        balance_sheet = _data["balance_sheet"].iloc[:, 0]
+        info = _data["info"]
+
+        # 1. Revenue Growth (g): 5Y CAGR
+        # Get last 5 years of revenue
+        revenues = financials.loc["Total Revenue"].dropna()
+        if len(revenues) < 2:
+            g = 0.05 # Default if not enough data
+        else:
+            start_rev = revenues.iloc[-1]
+            end_rev = revenues.iloc[0]
+            if start_rev <= 0: # Handle negative or zero start
+                g = 0.05
+            else:
+                num_years = len(revenues) - 1
+                g = (end_rev / start_rev) ** (1 / num_years) - 1
+                # Cap growth at a reasonable 20%
+                g = min(g, 0.20)
+
+        # 2. WACC (Weighted Average Cost of Capital)
+        # This is very complex. We must simplify and state assumptions.
+        # Cost of Equity (Re) using CAPM: Re = Rf + Beta * (Rm - Rf)
+        risk_free_rate = 0.04 # Assumption: 10-Yr Treasury
+        market_risk_premium = 0.06 # Assumption: Standard Market Premium
+        beta = info.get("beta", 1.0) # Get Beta from yfinance, default to 1
+        cost_of_equity = risk_free_rate + beta * market_risk_premium
+        
+        # Cost of Debt (Rd)
+        interest_expense = financials.loc["Interest Expense"].iloc[0]
+        long_term_debt = balance_sheet.get("Long Term Debt", 0)
+        short_term_debt = balance_sheet.get("Short Long Term Debt", 0)
+        total_debt = long_term_debt + short_term_debt
+        cost_of_debt = interest_expense / total_debt if total_debt else 0.05 # 5% default
+        
+        # Tax Rate
+        tax_provision = financials.loc["Tax Provision"].iloc[0]
+        income_before_tax = financials.loc["Income Before Tax"].iloc[0]
+        tax_rate = tax_provision / income_before_tax if income_before_tax else 0.21
+        
+        # WACC Calculation
+        market_cap = info.get("marketCap", 0)
+        equity_value = market_cap
+        enterprise_value = market_cap + total_debt - balance_sheet.get("Cash And Cash Equivalents", 0)
+        
+        e_percent = equity_value / enterprise_value if enterprise_value else 0
+        d_percent = total_debt / enterprise_value if enterprise_value else 0
+        
+        wacc = (e_percent * cost_of_equity) + (d_percent * cost_of_debt * (1 - tax_rate))
+        
+        # 3. Long-Term Growth (lt_g)
+        # Standard assumption: ~long-term inflation/GDP growth
+        lt_g = 0.025
+
+        return {
+            "g": g,
+            "wacc": wacc,
+            "lt_g": lt_g,
+            "tax_rate": tax_rate
+        }
+    except Exception as e:
+        # Return safe defaults
+        return {"g": 0.05, "wacc": 0.08, "lt_g": 0.025, "tax_rate": 0.21}
+
+
+@st.cache_data
+def calculate_dcf_model(_data, assumptions):
+    """
+    Performs a 5-year DCF calculation based on automated assumptions.
+    Rebuilt to match the reference screenshot EXACTLY.
+    """
+    try:
+        # Get TTM data
+        financials = _data["financials"]
+        cashflow = _data["cashflow"]
+        balance_sheet = _data["balance_sheet"]
+        info = _data["info"]
+        
+        # Get TTM values (sum of last 4 quarters)
+        ttm_revenue = financials.sum(axis=1).get("Total Revenue", 0)
+        ttm_ebitda = financials.sum(axis=1).get("EBITDA", 0)
+        ttm_d_a = financials.sum(axis=1).get("Depreciation And Amortization", 0)
+        ttm_ebit = ttm_ebitda - ttm_d_a
+        ttm_capex = cashflow.sum(axis=1).get("Capital Expenditure", 0)
+        
+        # NWC calculation (from most recent balance sheet)
+        bs_latest = balance_sheet.iloc[:, 0]
+        wc_assets = bs_latest.get("Net Receivables", 0) + bs_latest.get("Inventory", 0)
+        wc_liab = bs_latest.get("Accounts Payable", 0)
+        ttm_nwc = wc_assets - wc_liab
+        
+        # Get assumptions
+        g = assumptions["g"]
+        wacc = assumptions["wacc"]
+        lt_g = assumptions["lt_g"]
+        tax_rate = assumptions["tax_rate"]
+        
+        # Ratios for projection (as % of revenue)
+        ebitda_margin = ttm_ebitda / ttm_revenue if ttm_revenue else 0.15
+        d_a_ratio = ttm_d_a / ttm_revenue if ttm_revenue else 0.05
+        capex_ratio = ttm_capex / ttm_revenue if ttm_revenue else 0.06 # Note: often negative
+        nwc_ratio = ttm_nwc / ttm_revenue if ttm_revenue else 0.1
+        
+        # Build the 5-year forecast + terminal year
+        years = [f"FY{datetime.now().year + i + 1}" for i in range(5)]
+        columns = years + ["Terminal"]
+        
+        df = pd.DataFrame(index=[
+            "Revenue", "EBITDA", "EBIT", "NOPAT",
+            "(+) Depreciation & Amortization", "(-) CapEx", "(-) Change in NWC",
+            "Free Cash Flow to Firm (FCFF)", "Discount Factor", "PV of FCFF"
+        ], columns=columns, dtype=float)
+        
+        last_revenue = ttm_revenue
+        last_nwc = ttm_nwc
+        
+        # Project 5 years
+        for i, year in enumerate(years):
+            revenue = last_revenue * (1 + g)
+            ebitda = revenue * ebitda_margin
+            d_a = revenue * d_a_ratio
+            ebit = ebitda - d_a
+            nopat = ebit * (1 - tax_rate)
+            
+            capex = revenue * capex_ratio # CapEx is cash out, so it's negative
+            nwc = revenue * nwc_ratio
+            change_in_nwc = nwc - last_nwc
+            
+            fcff = nopat + d_a + capex - change_in_nwc # Add CapEx because it's already negative
+            
+            discount_factor = (1 / (1 + wacc)) ** (i + 1)
+            pv_fcff = fcff * discount_factor
+            
+            # Store values
+            df.loc["Revenue", year] = revenue
+            df.loc["EBITDA", year] = ebitda
+            df.loc["EBIT", year] = ebit
+            df.loc["NOPAT", year] = nopat
+            df.loc["(+) Depreciation & Amortization", year] = d_a
+            df.loc["(-) CapEx", year] = capex
+            df.loc["(-) Change in NWC", year] = change_in_nwc
+            df.loc["Free Cash Flow to Firm (FCFF)", year] = fcff
+            df.loc["Discount Factor", year] = discount_factor
+            df.loc["PV of FCFF", year] = pv_fcff
+            
+            # Update for next loop
+            last_revenue = revenue
+            last_nwc = nwc
+
+        # Terminal Value Calculation (Perpetuity Growth Model)
+        last_fcff = df.loc["Free Cash Flow to Firm (FCFF)", years[-1]]
+        terminal_fcff = last_fcff * (1 + lt_g)
+        terminal_value = terminal_fcff / (wacc - lt_g)
+        
+        pv_terminal_value = terminal_value * df.loc["Discount Factor", years[-1]]
+        
+        df.loc["Terminal Value", "Terminal"] = terminal_value
+        df.loc["PV of Terminal Value", "Terminal"] = pv_terminal_value
+        
+        # Enterprise & Equity Value
+        enterprise_value = df.loc["PV of FCFF"].sum() + pv_terminal_value
+        
+        # Get Net Debt
+        net_debt = calculate_ratios(_data)["Net Debt"]
+        equity_value = enterprise_value - net_debt
+        shares_outstanding = info.get("sharesOutstanding", 0)
+        
+        if shares_outstanding == 0:
+            return None, "Missing shares outstanding data to calculate fair value."
+            
+        fair_value = equity_value / shares_outstanding
+        current_price = info.get("currentPrice", 0)
+        if not current_price: # Fallback
+            current_price = _data["history_1y"]["Close"].iloc[-1]
+            
+        upside = (fair_value / current_price) - 1 if current_price else np.nan
+
+        return {
+            "fair_value": fair_value,
+            "current_price": current_price,
+            "upside": upside,
+            "dcf_table": df,
+            "assumptions": assumptions
+        }, None
+
+    except Exception as e:
+        return None, f"Error in DCF calculation: {e}"
+
+@st.cache_data
+def plot_candlestick_patterns(_data):
+    """
+    Plots a comprehensive candlestick chart with TA-Lib patterns.
+    """
+    if not TALIB_LOADED:
+        return go.Figure().update_layout(title="TA-Lib not loaded. Chart disabled.", template="plotly_dark")
+        
+    try:
+        df = _data["history_5y"].copy() # Use 5y data for patterns
+        
+        # 1. Identify patterns
+        df['CDLDOJI'] = talib.CDLDOJI(df['Open'], df['High'], df['Low'], df['Close'])
+        df['CDLHAMMER'] = talib.CDLHAMMER(df['Open'], df['High'], df['Low'], df['Close'])
+        df['CDLENGULFING'] = talib.CDLENGULFING(df['Open'], df['High'], df['Low'], df['Close'])
+        
+        doji_days = df[df['CDLDOJI'] != 0]
+        hammer_days = df[df['CDLHAMMER'] != 0]
+        engulfing_days = df[df['CDLENGULFING'] != 0]
+        
+        fig = go.Figure()
+        fig.add_trace(go.Candlestick(
+            x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'],
+            name='Candlestick'
+        ))
+
+        # Add markers
+        fig.add_trace(go.Scatter(
+            x=doji_days.index, y=doji_days['Low'] * 0.98, mode='markers',
+            marker=dict(symbol='circle', color='cyan', size=8), name='Doji'
+        ))
+        fig.add_trace(go.Scatter(
+            x=hammer_days.index, y=hammer_days['Low'] * 0.98, mode='markers',
+            marker=dict(symbol='triangle-up', color='yellow', size=8), name='Hammer'
+        ))
+        fig.add_trace(go.Scatter(
+            x=engulfing_days.index, y=engulfing_days['Low'] * 0.98, mode='markers',
+            marker=dict(symbol='square', color='magenta', size=8), name='Engulfing'
+        ))
+
+        # Style the chart
+        fig.update_layout(
+            title="Candlestick Chart with TA-Lib Pattern Recognition",
+            xaxis_title="Date", yaxis_title="Price", template="plotly_dark",
+            xaxis_rangeslider_visible=False,
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
         )
-        
-        include_peers = st.checkbox("Compare with Peers", value=False)
-        
-        if st.button("Run Analysis", type="primary", use_container_width=True):
-            with st.spinner(f"Fetching data for {ticker}..."):
-                st.session_state['ticker'] = ticker
-                st.session_state['data'] = fetch_company_data(ticker)
-                st.session_state['analysis_depth'] = analysis_depth
-                # Clear old simulation results
-                if 'mc_results' in st.session_state:
-                    del st.session_state['mc_results']
-        
-        st.markdown("---")
-        st.markdown("### Quick Access")
-        st.markdown("**Popular Tickers:**")
-        
-        popular = {
-            "Tech": ["AAPL", "MSFT", "GOOGL", "NVDA"],
-            "Finance": ["JPM", "BAC", "GS", "V"],
-            "Consumer": ["AMZN", "WMT", "NKE", "COST"]
-        }
-        
-        for sector, tickers in popular.items():
-            st.markdown(f"**{sector}**")
-            cols = st.columns(4)
-            for i, tick in enumerate(tickers):
-                if cols[i].button(tick, key=f"quick_{tick}"):
-                    st.session_state['ticker'] = tick
-                    st.session_state['data'] = fetch_company_data(tick)
-                    st.rerun()
+        return fig
+    except Exception as e:
+        return go.Figure().update_layout(title=f"Error plotting chart: {e}", template="plotly_dark")
+
+# ---
+# HELPER FUNCTIONS FOR UI
+# ---
+def format_value(val, type="number"):
+    if pd.isna(val): return "N/A"
+    if type == "percent": return f"{val:.2%}"
+    if type == "decimal": return f"{val:.2f}"
+    if type == "days": return f"{val:.1f} Days"
+    if type == "currency": return f"${val/1_000_000:,.1f} M"
+    if type == "table_currency": return f"{val/1_000_000:,.1f}"
+    if type == "table_percent": return f"{val:.1f}%"
+    return f"{val:,.0f}"
+
+def create_dcf_html_table(dcf_table):
+    """
+    Creates the precise HTML for the DCF table from the reference image.
+    """
+    df = dcf_table.copy()
     
-    # Main Content
-    if 'data' in st.session_state and st.session_state['data']:
-        data = st.session_state['data']
-        info = data['info']
-        ticker = st.session_state['ticker']
-        history = data['history'] # Now a DataFrame
+    # Define row groups
+    rows = {
+        "Revenue": False,
+        "EBITDA": False,
+        "EBIT": True,
+        "NOPAT": False,
+        "(+) Depreciation & Amortization": False,
+        "(-) CapEx": False,
+        "(-) Change in NWC": False,
+        "Free Cash Flow to Firm (FCFF)": True,
+        "Discount Factor": False,
+        "PV of FCFF": False,
+        "Terminal Value": False,
+        "PV of Terminal Value": False
+    }
+
+    html = "<table class='dcf-table'>"
+    
+    # Header
+    html += "<tr><th>(USD in Millions)</th>"
+    for col in df.columns:
+        html += f"<th>{col}</th>"
+    html += "</tr>"
+
+    # Rows
+    for idx, is_highlighted in rows.items():
+        if idx not in df.index: continue
         
-        # Company Overview Header
-        col1, col2, col3, col4, col5 = st.columns(5)
+        row_class = "highlight-row" if is_highlighted else ""
+        html += f"<tr class='{row_class}'><td>{idx}</td>"
         
-        current_price = info.get('currentPrice', 0)
-        prev_close = info.get('previousClose', current_price)
-        price_change = ((current_price - prev_close) / prev_close * 100) if prev_close > 0 else 0
-        
-        with col1:
-            st.metric(
-                "Current Price", 
-                f"${current_price:.2f}",
-                f"{price_change:+.2f}%"
-            )
-        with col2:
-            st.metric("Market Cap", f"${info.get('marketCap', 0)/1e9:.2f}B")
-        with col3:
-            st.metric("P/E Ratio", f"{info.get('trailingPE', 0):.2f}")
-        with col4:
-            st.metric("52W Range", f"${info.get('fiftyTwoWeekLow', 0):.0f} - ${info.get('fiftyTwoWeekHigh', 0):.0f}")
-        with col5:
-            st.metric("Avg Volume", f"{info.get('averageVolume', 0)/1e6:.1f}M")
-        
-        st.markdown(f"""
-            <div style='background-color: #1E293B; border: 1px solid #334155; 
-                         padding: 15px; border-radius: 10px; margin: 20px 0;'>
-                <strong style='color: #0EA5E9; font-size: 18px;'>{info.get('shortName', ticker)}</strong> 
-                <span style='color: #94A3B8;'>• {info.get('sector', 'N/A')} • {info.get('industry', 'N/A')}</span>
-            </div>
-        """, unsafe_allow_html=True)
-        
-        # Tabs
-        tab1, tab2, tab3, tab4, tab5 = st.tabs([
-            "Financial Health", 
-            "Risk Analytics", 
-            "Valuation Models",
-            "Technical Analysis",
-            "Financial News" # NEW TAB
-        ])
-        
-        # Tab 1: Enhanced Health Scorecard
-        with tab1:
-            ratios = calculate_advanced_ratios(data)
+        for col in df.columns:
+            val = df.loc[idx, col]
+            if pd.isna(val):
+                html += "<td>-</td>"
+                continue
             
-            if not ratios:
-                st.warning("Not enough financial data to display ratios.")
+            # Format based on row
+            if idx == "Discount Factor":
+                html += f"<td>{val:.3f}</td>"
             else:
-                col1, col2 = st.columns([2, 1])
-                
-                with col1:
-                    st.markdown("### Profitability & Returns")
-                    
-                    subcol1, subcol2, subcol3, subcol4 = st.columns(4)
-                    with subcol1:
-                        st.metric("Gross Margin", f"{ratios.get('Gross Margin', 0):.2f}%")
-                        st.metric("ROIC", f"{ratios.get('ROIC', 0):.2f}%")
-                    with subcol2:
-                        st.metric("EBIT Margin", f"{ratios.get('EBIT Margin', 0):.2f}%")
-                        st.metric("ROE", f"{ratios.get('ROE', 0):.2f}%")
-                    with subcol3:
-                        st.metric("Net Margin", f"{ratios.get('Net Margin', 0):.2f}%")
-                        st.metric("ROA", f"{ratios.get('ROA', 0):.2f}%")
-                    with subcol4:
-                        st.metric("FCF Margin", f"{ratios.get('FCF Margin', 0):.2f}%")
-                        st.metric("OCF/NI", f"{ratios.get('OCF/Net Income', 0):.2f}x")
-                    
-                    st.markdown("---")
-                    st.markdown("### Leverage & Liquidity")
-                    
-                    subcol1, subcol2, subcol3, subcol4 = st.columns(4)
-                    with subcol1:
-                        st.metric("Current Ratio", f"{ratios.get('Current Ratio', 0):.2f}x")
-                        st.metric("Debt/Equity", f"{ratios.get('Debt/Equity', 0):.1f}%")
-                    with subcol2:
-                        st.metric("Quick Ratio", f"{ratios.get('Quick Ratio', 0):.2f}x")
-                        st.metric("Debt/Assets", f"{ratios.get('Debt/Assets', 0):.1f}%")
-                    with subcol3:
-                        st.metric("Net Debt", f"${ratios.get('Net Debt', 0):.2f}B")
-                        st.metric("Interest Coverage", f"{ratios.get('Interest Coverage', 0):.1f}x")
-                    with subcol4:
-                        st.metric("Cash Conv. Cycle", f"{ratios.get('Cash Conversion Cycle', 0):.0f} days")
-                        st.metric("Asset Turnover", f"{ratios.get('Asset Turnover', 0):.2f}x")
-                
-                with col2:
-                    st.markdown("### Quality Scores")
-                    
-                    # Altman Z-Score
-                    z_score = ratios.get('Altman Z-Score', 0)
-                    if z_score > 2.99:
-                        z_badge = "risk-badge-safe"
-                        z_text = "SAFE ZONE"
-                    elif z_score > 1.81:
-                        z_badge = "risk-badge-warning"
-                        z_text = "GREY ZONE"
-                    else:
-                        z_badge = "risk-badge-danger"
-                        z_text = "DISTRESS ZONE"
-                    
-                    st.markdown(f"""
-                        <div class='metric-card' style='text-align: center;'>
-                            <h4 style='color: #94A3B8; margin: 0;'>Altman Z-Score</h4>
-                            <h1 style='color: #ffffff; margin: 10px 0; font-size: 48px;'>{z_score:.2f}</h1>
-                            <span class='risk-badge {z_badge}'>{z_text}</span>
-                            <p style='color: #94A3B8; margin-top: 15px; font-size: 12px;'>
-                                >2.99: Safe | 1.81-2.99: Grey | <1.81: Distress
-                            </p>
-                        </div>
-                    """, unsafe_allow_html=True)
-                    
-                    st.markdown("<br>", unsafe_allow_html=True)
-                    
-                    # Piotroski F-Score
-                    f_score = ratios.get('Piotroski F-Score', 0)
-                    if f_score >= 7:
-                        f_badge = "risk-badge-safe"
-                        f_text = "STRONG"
-                    elif f_score >= 4:
-                        f_badge = "risk-badge-warning"
-                        f_text = "MODERATE"
-                    else:
-                        f_badge = "risk-badge-danger"
-                        f_text = "WEAK"
-                    
-                    st.markdown(f"""
-                        <div class='metric-card' style='text-align: center;'>
-                            <h4 style='color: #94A3B8; margin: 0;'>Piotroski F-Score</h4>
-                            <h1 style='color: #ffffff; margin: 10px 0; font-size: 48px;'>{f_score}/9</h1>
-                            <span class='risk-badge {f_badge}'>{f_text}</span>
-                            <p style='color: #94A3B8; margin-top: 15px; font-size: 12px;'>
-                                7-9: Strong | 4-6: Moderate | 0-3: Weak
-                            </p>
-                        </div>
-                    """, unsafe_allow_html=True)
-                
-                # Insights Section
-                st.markdown("---")
-                st.markdown("### Key Insights")
-                
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    st.markdown('<div class="insight-box">', unsafe_allow_html=True)
-                    st.markdown("**Profitability Analysis**")
-                    insights = []
-                    if ratios.get('Gross Margin', 0) > 40:
-                        insights.append("Strong pricing power (Gross Margin > 40%)")
-                    if ratios.get('ROIC', 0) > 15:
-                        insights.append("Excellent capital efficiency (ROIC > 15%)")
-                    if ratios.get('FCF Margin', 0) > 10:
-                        insights.append("Strong free cash flow generation")
-                    if ratios.get('ROIC', 0) < 10:
-                        insights.append("Low return on invested capital")
-                    
-                    for insight in (insights if insights else ["No specific insights."]):
-                        st.markdown(f"- {insight}")
-                    st.markdown('</div>', unsafe_allow_html=True)
-                
-                with col2:
-                    st.markdown('<div class="insight-box">', unsafe_allow_html=True)
-                    st.markdown("**Financial Health**")
-                    insights = []
-                    if ratios.get('Current Ratio', 0) > 1.5:
-                        insights.append("Strong liquidity position")
-                    if ratios.get('Debt/Equity', 0) < 50:
-                        insights.append("Conservative leverage")
-                    if ratios.get('Debt/Equity', 0) > 100:
-                        insights.append("High leverage - monitor closely")
-                    if ratios.get('Interest Coverage', 0) > 5:
-                        insights.append("Comfortable debt service capacity")
-                    
-                    for insight in (insights if insights else ["No specific insights."]):
-                        st.markdown(f"- {insight}")
-                    st.markdown('</div>', unsafe_allow_html=True)
+                html += f"<td>{val/1_000_000:,.1f}</td>"
         
-        # Tab 2: Enhanced Risk Analytics
-        with tab2:
-            st.markdown("### Monte Carlo Simulation")
-            
-            col1, col2 = st.columns([2, 1])
-            
-            with col2:
-                st.markdown("#### Simulation Parameters")
-                
-                days_forward = st.slider("Forecast Horizon (Days)", 30, 730, 252)
-                num_simulations = st.slider("Simulations", 5000, 50000, 10000, step=5000)
-                confidence_level = st.slider("Confidence Level", 0.90, 0.99, 0.95, step=0.01)
-                
-                st.markdown("#### Historical Statistics")
-                if not history.empty:
-                    returns = history['Close'].pct_change().dropna()
-                    hist_vol = returns.std() * np.sqrt(252)
-                    hist_drift = returns.mean() * 252
-                    
-                    st.metric("Historical Volatility", f"{hist_vol*100:.2f}%")
-                    st.metric("Historical Drift", f"{hist_drift*100:.2f}%")
-                    st.metric("Sharpe Ratio", f"{calculate_sharpe_sortino(returns, get_risk_free_rate())[0]:.2f}")
-                
-                run_sim = st.button("Run Simulation", type="primary", use_container_width=True)
+        html += "</tr>"
+
+    html += "</table>"
+    return html
+
+# ---
+# MAIN APPLICATION LOGIC
+# ---
+
+# --- Sidebar ---
+st.sidebar.title("Risk-Adjusted Analyst")
+ticker_input = st.sidebar.text_input("Enter Company Ticker", "AAPL")
+
+if st.sidebar.button("Run Advanced Analysis"):
+    # This is the "computing complexity" part.
+    with st.spinner(f"Running Advanced Analysis for {ticker_input}... (This may take 10-20 seconds)"):
+        # 1. Pull all data
+        data, error = get_ticker_data(ticker_input)
+        
+        if error:
+            st.error(error)
+            st.stop()
+        
+        # 2. Store base data in session state
+        st.session_state.data = data
+        st.session_state.ticker = ticker_input
+        
+        # 3. Run all "heavy" calculations and store them
+        st.session_state.ratios = calculate_ratios(data)
+        
+        # Simulate extra "computing time" as requested
+        time.sleep(1) 
+        st.session_state.monte_carlo = run_monte_carlo(data, simulations=10000)
+        
+        time.sleep(1)
+        st.session_state.candlestick_fig = plot_candlestick_patterns(data)
+        
+        # NEW: Automated DCF
+        time.sleep(0.5)
+        dcf_assumptions = calculate_dcf_assumptions(data)
+        st.session_state.dcf_results, st.session_state.dcf_error = calculate_dcf_model(data, dcf_assumptions)
+        
+        st.session_state.analysis_run = True
+        st.rerun() # Rerun to update the UI with the new state
+
+# --- Main Page Display ---
+if "analysis_run" in st.session_state:
+    
+    data = st.session_state.data
+    info = data["info"]
+    ticker = st.session_state.ticker
+    
+    # --- Sidebar Navigation ---
+    st.sidebar.markdown("---")
+    nav_selection = st.sidebar.radio(
+        "Analysis Sections",
+        ["Valuation Summary", "DCF Valuation", "Risk Simulation", "Chart & Patterns", "Financials", "Latest News"],
+        label_visibility="collapsed"
+    )
+    
+    # ---
+    # MAIN CONTENT AREA
+    # ---
+    
+    # Header
+    st.title(f"{info.get('shortName', ticker)} ({ticker})")
+    st.markdown(f"**{info.get('industry', '')}** | {info.get('sector', '')} | [Website]({info.get('website', '#')})")
+    st.markdown("---")
+
+    # --- Valuation Summary Page (NEW) ---
+    if nav_selection == "Valuation Summary":
+        st.subheader("Valuation Summary")
+        
+        dcf_results = st.session_state.dcf_results
+        dcf_error = st.session_state.dcf_error
+
+        if dcf_error:
+            st.error(f"Could not generate valuation: {dcf_error}")
+        elif dcf_results:
+            col1, col2 = st.columns([1, 2])
             
             with col1:
-                if run_sim or 'mc_results' in st.session_state:
-                    if run_sim:
-                        with st.spinner("Running Monte Carlo simulation..."):
-                            current_price = history['Close'].iloc[-1]
-                            returns = history['Close'].pct_change().dropna()
-                            volatility = returns.std()
-                            drift = returns.mean()
-                            
-                            price_paths = monte_carlo_simulation(
-                                current_price, volatility, drift, days_forward, num_simulations
-                            )
-                            
-                            final_prices = price_paths[:, -1]
-                            final_returns = (final_prices - current_price) / current_price
-                            
-                            var, cvar = calculate_var_cvar(final_returns, confidence_level)
-                            sharpe, sortino = calculate_sharpe_sortino(returns, get_risk_free_rate())
-                            
-                            st.session_state['mc_results'] = {
-                                'price_paths': price_paths,
-                                'current_price': current_price,
-                                'volatility': volatility * np.sqrt(252),
-                                'drift': drift * 252,
-                                'final_returns': final_returns,
-                                'var': var,
-                                'cvar': cvar,
-                                'sharpe': sharpe,
-                                'sortino': sortino,
-                                'confidence_level': confidence_level
-                            }
-                    
-                    mc = st.session_state.get('mc_results')
-                    if mc:
-                        price_paths = mc['price_paths']
-                        final_prices = price_paths[:, -1]
-                        
-                        # Percentiles
-                        p5 = np.percentile(final_prices, 5)
-                        p25 = np.percentile(final_prices, 25)
-                        p50 = np.percentile(final_prices, 50)
-                        p75 = np.percentile(final_prices, 75)
-                        p95 = np.percentile(final_prices, 95)
-                        
-                        # Enhanced Plot
-                        fig = make_subplots(
-                            rows=2, cols=1,
-                            row_heights=[0.7, 0.3],
-                            subplot_titles=("Price Simulation Paths", "Distribution of Final Prices"),
-                            vertical_spacing=0.12
-                        )
-                        
-                        # Sample paths
-                        sample_paths = price_paths[np.random.choice(price_paths.shape[0], 200, replace=False)]
-                        for path in sample_paths:
-                            fig.add_trace(
-                                go.Scatter(
-                                    y=path,
-                                    mode='lines',
-                                    line=dict(color='rgba(110, 110, 150, 0.1)', width=0.5),
-                                    showlegend=False,
-                                    hoverinfo='skip'
-                                ),
-                                row=1, col=1
-                            )
-                        
-                        # Percentile lines
-                        days_range = list(range(len(price_paths[0])))
-                        fig.add_trace(go.Scatter(x=days_range, y=[p5]*len(days_range), name='P5', 
-                                                 line=dict(color='#EF4444', width=2, dash='dash')), row=1, col=1)
-                        fig.add_trace(go.Scatter(x=days_range, y=[p50]*len(days_range), name='Median', 
-                                                 line=dict(color='#0EA5E9', width=3)), row=1, col=1)
-                        fig.add_trace(go.Scatter(x=days_range, y=[p95]*len(days_range), name='P95', 
-                                                 line=dict(color='#10B981', width=2, dash='dash')), row=1, col=1)
-                        
-                        # Distribution histogram
-                        fig.add_trace(
-                            go.Histogram(
-                                x=final_prices,
-                                nbinsx=50,
-                                name='Distribution',
-                                marker=dict(color='#0EA5E9', opacity=0.7),
-                                showlegend=False
-                            ),
-                            row=2, col=1
-                        )
-                        
-                        # Add VaR line
-                        var_price = mc['current_price'] * (1 + mc['var'])
-                        fig.add_vline(x=var_price, line_dash="dash", line_color="#EF4444", 
-                                       annotation_text=f"VaR ({mc['confidence_level']*100:.0f}%)", 
-                                       row=2, col=1)
-                        
-                        fig.update_layout(
-                            template="plotly_dark",
-                            plot_bgcolor="#0F172A",
-                            paper_bgcolor="#0F172A",
-                            height=700,
-                            showlegend=True,
-                            legend=dict(x=0.01, y=0.99),
-                            hovermode='x unified'
-                        )
-                        
-                        fig.update_xaxes(title_text="Trading Days", row=1, col=1)
-                        fig.update_xaxes(title_text="Final Price ($)", row=2, col=1)
-                        fig.update_yaxes(title_text="Price ($)", row=1, col=1)
-                        fig.update_yaxes(title_text="Frequency", row=2, col=1)
-                        
-                        st.plotly_chart(fig, use_container_width=True)
-                        
-                        # Risk Metrics
-                        st.markdown("#### Probabilistic Outcomes & Risk Metrics")
-                        
-                        col_a, col_b, col_c, col_d, col_e = st.columns(5)
-                        with col_a:
-                            st.metric("P5 (Downside)", f"${p5:.2f}", 
-                                      f"{(p5/mc['current_price']-1)*100:.1f}%")
-                        with col_b:
-                            st.metric("P25", f"${p25:.2f}", 
-                                      f"{(p25/mc['current_price']-1)*100:.1f}%")
-                        with col_c:
-                            st.metric("P50 (Median)", f"${p50:.2f}", 
-                                      f"{(p50/mc['current_price']-1)*100:.1f}%")
-                        with col_d:
-                            st.metric("P75", f"${p75:.2f}", 
-                                      f"{(p75/mc['current_price']-1)*100:.1f}%")
-                        with col_e:
-                            st.metric("P95 (Upside)", f"${p95:.2f}", 
-                                      f"{(p95/mc['current_price']-1)*100:.1f}%")
-                        
-                        st.markdown("---")
-                        
-                        col_x, col_y, col_z, col_w = st.columns(4)
-                        with col_x:
-                            st.metric(f"VaR ({mc['confidence_level']*100:.0f}%)", 
-                                      f"{mc['var']*100:.2f}%",
-                                      help="Maximum expected loss at given confidence level")
-                        with col_y:
-                            st.metric(f"CVaR ({mc['confidence_level']*100:.0f}%)", 
-                                      f"{mc['cvar']*100:.2f}%",
-                                      help="Expected loss when VaR is exceeded")
-                        with col_z:
-                            st.metric("Sharpe Ratio", f"{mc['sharpe']:.2f}",
-                                      help="Risk-adjusted return metric")
-                        with col_w:
-                            st.metric("Sortino Ratio", f"{mc['sortino']:.2f}",
-                                      help="Downside risk-adjusted return")
-                        
-                        # Probability of outcomes
-                        st.markdown("#### Probability Analysis")
-                        prob_positive = (final_prices > mc['current_price']).sum() / len(final_prices) * 100
-                        prob_10_up = (final_prices > mc['current_price'] * 1.1).sum() / len(final_prices) * 100
-                        prob_10_down = (final_prices < mc['current_price'] * 0.9).sum() / len(final_prices) * 100
-                        
-                        col1, col2, col3 = st.columns(3)
-                        with col1:
-                            st.markdown(f"""
-                                <div class='metric-card' style='text-align: center;'>
-                                    <h4 style='color: #94A3B8;'>Prob. of Gain</h4>
-                                    <h2 style='color: #10B981;'>{prob_positive:.1f}%</h2>
-                                </div>
-                            """, unsafe_allow_html=True)
-                        with col2:
-                            st.markdown(f"""
-                                <div class='metric-card' style='text-align: center;'>
-                                    <h4 style='color: #94A3B8;'>Prob. of +10%</h4>
-                                    <h2 style='color: #10B981;'>{prob_10_up:.1f}%</h2>
-                                </div>
-                            """, unsafe_allow_html=True)
-                        with col3:
-                            st.markdown(f"""
-                                <div class='metric-card' style='text-align: center;'>
-                                    <h4 style='color: #94A3B8;'>Prob. of -10%</h4>
-                                    <h2 style='color: #EF4444;'>{prob_10_down:.1f}%</h2>
-                                </div>
-                            """, unsafe_allow_html=True)
+                # --- Valuation Box (from image_16eadb.png) ---
+                upside_pct = dcf_results['upside']
+                upside_text = f"{upside_pct:.1%}"
+                
+                if upside_pct > 0:
+                    bar_color = "#00A89C" # Teal
+                    text_color = "#00A89C"
                 else:
-                    st.info("Configure parameters and run simulation to see results.")
-        
-        # Tab 3: Enhanced DCF Valuation
-        with tab3:
-            st.markdown("### 2-Stage Enterprise Value DCF Model")
-            
-            col1, col2 = st.columns([2, 1])
-            
+                    bar_color = "#D44E52" # Red
+                    text_color = "#D44E52"
+                    
+                st.markdown(f"""
+                <div class="summary-box">
+                    <h4>Valuation Summary</h4>
+                    <div class="price-row">
+                        <span class="price-label">Current Price</span>
+                        <span class="price-value">${dcf_results['current_price']:,.2f}</span>
+                    </div>
+                    <div class="price-row">
+                        <span class="price-label">Fair Price (DCF)</span>
+                        <span class="price-value">${dcf_results['fair_value']:,.2f}</span>
+                    </div>
+                    <div class="upside-bar">
+                        <div class="upside-fill" style="background-color: {bar_color}; width: 100%;"></div>
+                    </div>
+                    <h3 class="upside-text" style="color: {text_color};">{upside_text}</h3>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                st.markdown("") # Spacer
+                
+                # --- Key Assumptions Box (from image_16eadb.png) ---
+                assumptions = dcf_results['assumptions']
+                st.markdown(f"""
+                <div class="summary-box">
+                    <h4>Key Assumptions</h4>
+                    <div class="price-row">
+                        <span class="price-label">WACC / Discount Rate</span>
+                        <span class="price-value">{assumptions['wacc']:.2%}</span>
+                    </div>
+                    <div class="price-row">
+                        <span class="price-label">Revenue Growth (5Y CAGR)</span>
+                        <span class="price-value">{assumptions['g']:.2%}</span>
+                    </div>
+                    <div class="price-row">
+                        <span class="price-label">Long-Term Growth Rate</span>
+                        <span class="price-value">{assumptions['lt_g']:.2%}</span>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+
             with col2:
-                st.markdown("#### Model Parameters")
+                # --- Key Ratios ---
+                st.subheader("Key Ratios & Health Score")
+                ratios = st.session_state.ratios
                 
-                # WACC Calculation
-                st.markdown("##### WACC Inputs")
-                rfr = st.slider(
-                    "Risk-Free Rate (10y Treasury)",
-                    min_value=0.01, max_value=0.07,
-                    value=get_risk_free_rate(), step=0.001, format="%.3f%%" # Smart Default
-                )
-                market_premium = st.slider(
-                    "Equity Market Risk Premium",
-                    min_value=0.03, max_value=0.08,
-                    value=0.05, step=0.005, format="%.1f%%"
-                )
+                rcol1, rcol2, rcol3 = st.columns(3)
                 
-                wacc, wacc_details = calculate_wacc(data, rfr, market_premium)
-                
-                if wacc:
-                    st.metric("Calculated WACC", f"{wacc*100:.2f}%")
-                    with st.expander("Show WACC Details"):
-                        st.json({k: (f"{v*100:.2f}%" if "%" in k or "Cost" in k or "Rate" in k else (f"{v:.2f}" if isinstance(v, float) else f"{v:,.0f}")) for k, v in wacc_details.items()})
-                else:
-                    st.error(f"Could not calculate WACC: {wacc_details}")
-                    st.stop()
-                
-                # --- NEW: Smart Growth Defaults ---
-                hist_cagr = calculate_cagr(data)
-                default_g_5y = round(hist_cagr, 3)
-                default_g_10y = round(hist_cagr / 2, 3)
-                # ----------------------------------
-                
-                # Growth Assumptions
-                st.markdown("##### Growth Inputs")
-                g_5y = st.slider(
-                    "FCFF Growth (Years 1-5)",
-                    min_value=-0.05, max_value=0.30, 
-                    value=default_g_5y, # Smart Default
-                    step=0.01, format="%.1f%%"
-                )
-                g_10y = st.slider(
-                    "FCFF Growth (Years 6-10)",
-                    min_value=-0.05, max_value=0.20, 
-                    value=default_g_10y, # Smart Default
-                    step=0.01, format="%.1f%%"
-                )
-                g_t = st.slider(
-                    "Terminal Growth Rate",
-                    min_value=0.01, max_value=0.05, value=0.025, step=0.005, format="%.1f%%"
-                )
-                
-                dcf_result = calculate_dcf_valuation_advanced(data, wacc, g_5y, g_10y, g_t)
-            
-            with col1:
-                if dcf_result:
-                    current_price = info.get('currentPrice', 0)
-                    intrinsic_price = dcf_result['intrinsic_price']
-                    upside = (intrinsic_price / current_price - 1) * 100 if current_price > 0 else 0
-                    
-                    # Valuation Summary Card
-                    if upside > 10:
-                        upside_color = "#10B981"
-                        upside_text = "UNDERVALUED"
-                    elif upside < -10:
-                        upside_color = "#EF4444"
-                        upside_text = "OVERVALUED"
+                with rcol1:
+                    st.metric("Gross Margin", format_value(ratios.get("Gross Margin"), "percent"))
+                    st.metric("Net Debt", format_value(ratios.get("Net Debt"), "currency"))
+                with rcol2:
+                    st.metric("EBIT Margin", format_value(ratios.get("EBIT Margin"), "percent"))
+                    st.metric("ROE", format_value(ratios.get("ROE"), "percent"))
+                with rcol3:
+                    st.metric("ROIC", format_value(ratios.get("ROIC"), "percent"))
+                    z_score = ratios.get("Altman Z-Score")
+                    st.metric("Altman Z-Score", format_value(z_score, "decimal"))
+
+                if not pd.isna(z_score):
+                    if z_score < 1.81:
+                        st.error("Bankruptcy Risk: Distress Zone")
+                    elif z_score < 2.99:
+                        st.warning("Bankruptcy Risk: Grey Zone")
                     else:
-                        upside_color = "#F59E0B"
-                        upside_text = "FAIRLY VALUED"
-                    
-                    st.markdown(f"""
-                        <div style='background-color: #1E293B; border: 1px solid #334155;
-                                    padding: 30px; border-radius: 15px; margin-bottom: 20px;'>
-                            <div style='display: flex; justify-content: space-around; align-items: center;'>
-                                <div style='text-align: center;'>
-                                    <h4 style='color: #94A3B8; margin: 0;'>Current Price</h4>
-                                    <h1 style='color: #ffffff; margin: 10px 0;'>${current_price:.2f}</h1>
-                                </div>
-                                <div style='text-align: center; font-size: 48px; color: {upside_color};'>
-                                    {"→" if abs(upside) < 10 else "↗" if upside > 0 else "↘"}
-                                </div>
-                                <div style='text-align: center;'>
-                                    <h4 style='color: #94A3B8; margin: 0;'>Intrinsic Value</h4>
-                                    <h1 style='color: {upside_color}; margin: 10px 0;'>${intrinsic_price:.2f}</h1>
-                                </div>
-                                <div style='text-align: center;'>
-                                    <h4 style='color: #94A3B8; margin: 0;'>Upside/Downside</h4>
-                                    <h1 style='color: {upside_color}; margin: 10px 0;'>{upside:+.1f}%</h1>
-                                    <span style='background: {upside_color}; color: white; padding: 5px 15px; 
-                                                 border-radius: 15px; font-size: 12px; font-weight: 600;'>
-                                        {upside_text}
-                                    </span>
-                                </div>
-                            </div>
-                        </div>
-                    """, unsafe_allow_html=True)
-                    
-                    # Detailed Breakdown
-                    col_a, col_b = st.columns(2)
-                    
-                    with col_a:
-                        st.markdown("#### Enterprise Value Build-Up")
+                        st.success("Bankruptcy Risk: Safe Zone")
                         
-                        ev_data = pd.DataFrame({
-                            'Component': [
-                                'PV of Explicit FCF (Y1-10)',
-                                'PV of Terminal Value',
-                                'Enterprise Value',
-                                'Less: Net Debt',
-                                'Equity Value'
-                            ],
-                            'Value ($B)': [
-                                dcf_result['pv_fcf'] / 1e9,
-                                dcf_result['pv_terminal'] / 1e9,
-                                dcf_result['enterprise_value'] / 1e9,
-                                -(dcf_result['enterprise_value'] - dcf_result['equity_value']) / 1e9,
-                                dcf_result['equity_value'] / 1e9
-                            ]
-                        })
-                        
-                        # Waterfall Chart
-                        fig = go.Figure(go.Waterfall(
-                            x=ev_data['Component'],
-                            y=ev_data['Value ($B)'],
-                            measure=['relative', 'relative', 'total', 'relative', 'total'],
-                            text=[f"${v:.2f}B" for v in ev_data['Value ($B)']],
-                            textposition='outside',
-                            connector={"line": {"color": "#94A3B8"}},
-                            increasing={"marker": {"color": "#10B981"}},
-                            decreasing={"marker": {"color": "#EF4444"}},
-                            totals={"marker": {"color": "#0EA5E9"}}
-                        ))
-                        
-                        fig.update_layout(
-                            template="plotly_dark",
-                            plot_bgcolor="#0F172A",
-                            paper_bgcolor="#0F172A",
-                            height=400,
-                            showlegend=False,
-                            title="Enterprise to Equity Value Waterfall"
-                        )
-                        
-                        st.plotly_chart(fig, use_container_width=True)
-                    
-                    with col_b:
-                        st.markdown("#### 10-Year Cash Flow Projection")
-                        
-                        fcf_df = pd.DataFrame({
-                            'Year': range(1, 11),
-                            'Projected FCFF ($M)': [fcf/1e6 for fcf in dcf_result['projected_fcf']],
-                            'PV of FCFF ($M)': [fcf/(1+wacc)**i/1e6 for i, fcf in enumerate(dcf_result['projected_fcf'], 1)]
-                        })
-                        
-                        # FCF Chart
-                        fig = go.Figure()
-                        fig.add_trace(go.Bar(
-                            x=fcf_df['Year'],
-                            y=fcf_df['Projected FCFF ($M)'],
-                            name='Projected FCFF',
-                            marker_color='#0EA5E9'
-                        ))
-                        fig.add_trace(go.Scatter(
-                            x=fcf_df['Year'],
-                            y=fcf_df['PV of FCFF ($M)'],
-                            name='Present Value',
-                            mode='lines+markers',
-                            line=dict(color='#10B981', width=3)
-                        ))
-                        
-                        fig.update_layout(
-                            template="plotly_dark",
-                            plot_bgcolor="#0F172A",
-                            paper_bgcolor="#0F172A",
-                            height=300,
-                            legend=dict(x=0.01, y=0.99),
-                            yaxis_title="Value ($M)",
-                            margin=dict(t=20, b=20)
-                        )
-                        
-                        st.plotly_chart(fig, use_container_width=True)
-                        st.metric("Base Year FCFF (T=0)", f"${dcf_result['base_fcff']/1e6:.2f}M")
-                        st.metric("Terminal Value (Year 10)", f"${dcf_result['terminal_value']/1e9:.2f}B")
-                        
-                    
-                    # Sensitivity Analysis
-                    st.markdown("---")
-                    st.markdown("#### Sensitivity Analysis")
-                    
-                    growth_range = np.linspace(g_5y - 0.02, g_5y + 0.02, 5)
-                    wacc_range = np.linspace(wacc - 0.02, wacc + 0.02, 5)
-                    
-                    sensitivity = np.zeros((5, 5))
-                    for i, g in enumerate(growth_range):
-                        for j, w in enumerate(wacc_range):
-                            # Adjust transitional growth proportionally
-                            g_10_sens = g_10y * (g / g_5y) if g_5y != 0 else g_10y
-                            if w > g_t:
-                                result = calculate_dcf_valuation_advanced(data, w, g, g_10_sens, g_t)
-                                if result:
-                                    sensitivity[i, j] = result['intrinsic_price']
-                    
-                    # Heatmap
-                    fig = go.Figure(data=go.Heatmap(
-                        z=sensitivity,
-                        x=[f"{w*100:.2f}%" for w in wacc_range],
-                        y=[f"{g*100:.1f}%" for g in growth_range],
-                        colorscale='RdYlGn',
-                        text=sensitivity,
-                        texttemplate='$%{text:.2f}',
-                        textfont={"size": 10},
-                        colorbar=dict(title="Price ($)")
-                    ))
-                    
-                    fig.update_layout(
-                        template="plotly_dark",
-                        plot_bgcolor="#0F172A",
-                        paper_bgcolor="#0F172A",
-                        title="Intrinsic Value Sensitivity (Y1-5 Growth vs WACC)",
-                        xaxis_title="WACC",
-                        yaxis_title="Y1-5 Growth Rate",
-                        height=500
-                    )
-                    
-                    st.plotly_chart(fig, use_container_width=True)
-                    st.markdown(f"**Reference:** Current market price is **${current_price:.2f}**")
-                    
-                else:
-                    st.error("Unable to calculate DCF - insufficient financial data or negative cash flows")
+            st.subheader("Business Summary")
+            st.write(info.get("longBusinessSummary", "No summary available."))
+
+    # --- DCF Valuation Page ---
+    elif nav_selection == "DCF Valuation":
+        st.subheader("Discounted Cash Flow (DCF) Valuation")
         
-        # --- TAB 4: REBUILT TECHNICAL ANALYSIS ---
-        with tab4:
-            st.markdown("### Dynamic Technical Analysis")
+        dcf_results = st.session_state.dcf_results
+        dcf_error = st.session_state.dcf_error
+        
+        if dcf_error:
+            st.error(f"DCF Error: {dcf_error}")
+        elif dcf_results:
+            st.markdown(f"#### 5-Year DCF Projection (in $ Millions)")
+            dcf_table = dcf_results['dcf_table']
+            html_table = create_dcf_html_table(dcf_table)
+            st.markdown(html_table, unsafe_allow_html=True)
             
-            # --- Chart Controls ---
-            st.markdown("#### Chart Controls")
-            col1, col2, col3 = st.columns([1, 1, 2])
-            with col1:
-                period = st.radio(
-                    "Select Time Period", 
-                    ["3m", "6m", "1y", "5y"], 
-                    index=2, # Default to 1y
-                    horizontal=True
-                )
-            with col2:
-                st.markdown("**Indicators**")
-                show_bb = st.checkbox("Bollinger Bands", value=True)
-                show_sma = st.checkbox("Moving Averages", value=True)
-            with col3:
-                st.markdown("**Oscillators (in new pane)**")
-                show_rsi = st.checkbox("RSI", value=True)
-                show_macd = st.checkbox("MACD", value=True)
+            # Show summary numbers at the bottom
+            st.markdown("---")
+            st.subheader("Valuation Buildup")
             
-            # --- Filter Data by Period ---
-            period_map = {"3m": 63, "6m": 126, "1y": 252, "5y": len(history)}
-            chart_data = history.iloc[-period_map[period]:].copy()
+            pv_fcff_sum = dcf_table.loc["PV of FCFF"].sum()
+            pv_tv = dcf_table.loc["PV of Terminal Value", "Terminal"]
+            enterprise_value = pv_fcff_sum + pv_tv
+            net_debt = calculate_ratios(data)["Net Debt"]
+            equity_value = enterprise_value - net_debt
+            shares = info.get("sharesOutstanding", 0)
+            fair_value = dcf_results["fair_value"]
+            
+            col1, col2, col3 = st.columns(3)
+            col1.metric("PV of 5-Year FCFF", f"${pv_fcff_sum/1_000_000:,.1f} M")
+            col2.metric("PV of Terminal Value", f"${pv_tv/1_000_000:,.1f} M")
+            col3.metric("Enterprise Value (EV)", f"${enterprise_value/1_000_000:,.1f} M")
+            
+            col1.metric("(-) Net Debt", f"${net_debt/1_000_000:,.1f} M")
+            col2.metric("Equity Value", f"${equity_value/1_000_000:,.1f} M")
+            col3.metric("Fair Value per Share", f"${fair_value:,.2f}")
 
-            # --- Calculate Indicators ---
-            # Moving Averages
-            chart_data['SMA_20'] = chart_data['Close'].rolling(20).mean()
-            chart_data['SMA_50'] = chart_data['Close'].rolling(50).mean()
-            chart_data['SMA_200'] = chart_data['Close'].rolling(200).mean()
-            
-            # Bollinger Bands
-            chart_data['BB_Mid'] = chart_data['SMA_20']
-            chart_data['BB_Std'] = chart_data['Close'].rolling(20).std()
-            chart_data['BB_Upper'] = chart_data['BB_Mid'] + (chart_data['BB_Std'] * 2)
-            chart_data['BB_Lower'] = chart_data['BB_Mid'] - (chart_data['BB_Std'] * 2)
-            
-            # RSI
-            delta = chart_data['Close'].diff(1)
-            gain = (delta.where(delta > 0, 0)).rolling(14).mean()
-            loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
-            rs = gain / loss
-            chart_data['RSI'] = 100 - (100 / (1 + rs))
 
-            # MACD
-            ema_12 = chart_data['Close'].ewm(span=12, adjust=False).mean()
-            ema_26 = chart_data['Close'].ewm(span=26, adjust=False).mean()
-            chart_data['MACD'] = ema_12 - ema_26
-            chart_data['MACD_Signal'] = chart_data['MACD'].ewm(span=9, adjust=False).mean()
-            chart_data['MACD_Hist'] = chart_data['MACD'] - chart_data['MACD_Signal']
+    # --- Risk Simulation Page ---
+    elif nav_selection == "Risk Simulation":
+        st.subheader("Risk Simulation (Monte Carlo) - 10,000 Paths")
+        
+        mc = st.session_state.monte_carlo
+        
+        if mc:
+            st.markdown("#### Probability Analysis (1-Year Horizon)")
+            col1, col2, col3 = st.columns(3)
+            col1.metric("Prob. of Gain", f"{mc['prob_gain']:.1%}", help="Probability the stock will be above its current price in 1 year.")
+            col2.metric("Prob. of +10%", f"{mc['prob_plus_10']:.1%}", help="Probability the stock will rise over 10% in 1 year.")
+            col3.metric("Prob. of -10%", f"{mc['prob_minus_10']:.1%}", help="Probability the stock will fall over 10% in 1 year.")
             
-            # --- Create Dynamic Subplots ---
-            rows = 1
-            row_heights = [0.7]
-            specs = [[{"secondary_y": False}]]
-            
-            if show_rsi:
-                rows += 1
-                row_heights.append(0.15)
-                specs.append([{"secondary_y": False}])
-            if show_macd:
-                rows += 1
-                row_heights.append(0.15)
-                specs.append([{"secondary_y": False}])
-            
-            row_heights = [h / sum(row_heights) for h in row_heights] # Normalize
-            
-            fig = make_subplots(
-                rows=rows, cols=1,
-                shared_xaxes=True,
-                row_heights=row_heights,
-                vertical_spacing=0.03,
-                specs=specs
-            )
-            
-            # --- Row 1: Price Chart ---
-            fig.add_trace(go.Candlestick(
-                x=chart_data.index,
-                open=chart_data['Open'],
-                high=chart_data['High'],
-                low=chart_data['Low'],
-                close=chart_data['Close'],
-                name='Price',
-                increasing_line_color='#10B981',
-                decreasing_line_color='#EF4444'
-            ), row=1, col=1)
+            st.markdown("#### Risk Metrics (1-Year Horizon)")
+            col1, col2, col3, col4 = st.columns(4)
+            col1.metric("VaR (95%)", f"{mc['var_95']:.2%}", help="Value-at-Risk: 95% confidence that the portfolio will not lose more than this percentage in 1 year.")
+            col2.metric("CVaR (95%)", f"{mc['cvar_95']:.2%}", help="Conditional VaR: The expected loss if the 5% worst-case scenario occurs.")
+            col3.metric("Sharpe Ratio", f"{mc['sharpe_ratio']:.2f}", help="Risk-adjusted return (vs. 4% risk-free rate).")
+            col4.metric("Sortino Ratio", f"{mc['sortino_ratio']:.2f}", help="Risk-adjusted return, only penalizing downside volatility.")
 
-            if show_sma:
-                fig.add_trace(go.Scatter(x=chart_data.index, y=chart_data['SMA_20'], 
-                                         name='SMA 20', line=dict(color='#0EA5E9', width=1)), row=1, col=1)
-                fig.add_trace(go.Scatter(x=chart_data.index, y=chart_data['SMA_50'], 
-                                         name='SMA 50', line=dict(color='#F59E0B', width=1)), row=1, col=1)
-                if period == "5y": # Only show 200 on long charts
-                    fig.add_trace(go.Scatter(x=chart_data.index, y=chart_data['SMA_200'], 
-                                             name='SMA 200', line=dict(color='#E11D48', width=2)), row=1, col=1)
-
-            if show_bb:
-                fig.add_trace(go.Scatter(x=chart_data.index, y=chart_data['BB_Upper'], 
-                                         name='BB Upper', line=dict(color='#94A3B8', width=1, dash='dash')), row=1, col=1)
-                fig.add_trace(go.Scatter(x=chart_data.index, y=chart_data['BB_Lower'], 
-                                         name='BB Lower', line=dict(color='#94A3B8', width=1, dash='dash'),
-                                         fill='tonexty', fillcolor='rgba(148, 163, 184, 0.1)'), row=1, col=1)
-
-            # Volume
-            colors = ['#10B981' if chart_data['Close'].iloc[i] >= chart_data['Open'].iloc[i] 
-                      else '#EF4444' for i in range(len(chart_data))]
-            fig.add_trace(go.Bar(x=chart_data.index, y=chart_data['Volume'], 
-                                 name='Volume', marker_color=colors, showlegend=False), row=1, col=1)
-            fig.update_yaxes(title_text="Price", row=1, col=1)
-            
-            # --- Add Oscillator Panes ---
-            current_row = 2
-            if show_rsi:
-                fig.add_trace(go.Scatter(x=chart_data.index, y=chart_data['RSI'], 
-                                         name='RSI', line=dict(color='#0EA5E9', width=1)), 
-                              row=current_row, col=1)
-                fig.add_hline(y=70, line_dash="dash", line_color="#94A3B8", row=current_row, col=1)
-                fig.add_hline(y=30, line_dash="dash", line_color="#94A3B8", row=current_row, col=1)
-                fig.update_yaxes(title_text="RSI", range=[0, 100], row=current_row, col=1)
-                current_row += 1
-            
-            if show_macd:
-                fig.add_trace(go.Scatter(x=chart_data.index, y=chart_data['MACD'], 
-                                         name='MACD', line=dict(color='#0EA5E9', width=1)), 
-                              row=current_row, col=1)
-                fig.add_trace(go.Scatter(x=chart_data.index, y=chart_data['MACD_Signal'], 
-                                         name='Signal', line=dict(color='#F59E0B', width=1)), 
-                              row=current_row, col=1)
-                hist_colors = ['#10B981' if v > 0 else '#EF4444' for v in chart_data['MACD_Hist']]
-                fig.add_trace(go.Bar(x=chart_data.index, y=chart_data['MACD_Hist'], 
-                                     name='Histogram', marker_color=hist_colors), 
-                              row=current_row, col=1)
-                fig.update_yaxes(title_text="MACD", row=current_row, col=1)
-                current_row += 1
-
-            fig.update_layout(
-                template="plotly_dark",
-                plot_bgcolor="#0F172A",
-                paper_bgcolor="#0F172A",
-                height=800,
-                xaxis_rangeslider_visible=False,
-                hovermode='x unified',
-                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
-            )
-            fig.update_xaxes(showticklabels=True, row=rows, col=1) # Only show bottom x-axis labels
-            
+            st.markdown("#### Monte Carlo Price Path Simulation")
+            paths_to_plot = mc['price_paths'][:, :100] # Plot only 100 paths
+            fig = go.Figure()
+            for i in range(paths_to_plot.shape[1]):
+                fig.add_trace(go.Scatter(y=paths_to_plot[:, i], mode='lines', line=dict(width=0.5, color='rgba(0, 168, 156, 0.3)')))
+            fig.update_layout(title="100 Sample Price Paths (from 10,000 simulations)", template="plotly_dark", showlegend=False, xaxis_title="Days", yaxis_title="Stock Price")
             st.plotly_chart(fig, use_container_width=True)
-
-        # --- TAB 5: NEW FINANCIAL NEWS ---
-        with tab5:
-            st.markdown("### Latest Financial News")
             
-            news = data.get('news')
-            
-            if not news:
-                st.info("No recent news found for this ticker.")
-            else:
-                for article in news:
-                    title = article.get('title')
-                    link = article.get('link')
-                    publisher = article.get('publisher')
-                    time = datetime.fromtimestamp(article.get('providerPublishTime')).strftime('%Y-%m-%d %H:%M')
-                    
-                    st.markdown(f"""
-                        <div class='news-article'>
-                            <div class='news-title'><a href='{link}' target='_blank'>{title}</a></div>
-                            <div class='news-publisher'>{publisher} • {time}</div>
-                        </div>
-                    """, unsafe_allow_html=True)
+            st.markdown("#### Distribution of Ending Prices (1-Year)")
+            hist_fig = ff.create_distplot([mc['ending_prices']], ['Ending Prices'], show_hist=True, show_rug=False)
+            hist_fig.update_layout(title="Probability Distribution", template="plotly_dark", showlegend=False)
+            st.plotly_chart(hist_fig, use_container_width=True)
 
-    else:
-        # Landing Page
-        st.markdown("""
-            <div style='text-align: center; padding: 60px 20px;'>
-                <h2 style='color: #0EA5E9; font-size: 36px; margin-bottom: 20px;'>
-                    Welcome to Risk-Adjusted Analyst Pro
-                </h2>
-                <p style='color: #94A3B8; font-size: 18px; max-width: 800px; margin: 0 auto;'>
-                    Advanced financial analysis platform combining traditional valuation models with 
-                    cutting-edge risk analytics and Monte Carlo simulations.
-                </p>
+    # --- Chart & Patterns Page ---
+    elif nav_selection == "Chart & Patterns":
+        if not TALIB_LOADED:
+            st.error("TA-Lib library not found. Candlestick pattern analysis is disabled. Please see code comments for installation instructions.")
+        else:
+            st.subheader("Advanced Charting & Pattern Recognition")
+            st.plotly_chart(st.session_state.candlestick_fig, use_container_width=True)
+
+    # --- Financials Page ---
+    elif nav_selection == "Financials":
+        st.subheader("Financial Statements")
+        
+        tab1, tab2, tab3 = st.tabs(["Income Statement", "Balance Sheet", "Cash Flow"])
+        
+        with tab1:
+            st.dataframe(data["financials"])
+        with tab2:
+            st.dataframe(data["balance_sheet"])
+        with tab3:
+            st.dataframe(data["cashflow"])
+
+    # --- News Page ---
+    elif nav_selection == "Latest News":
+        st.subheader("Latest Financial News")
+        
+        news_list = data.get("news", [])
+        if not news_list:
+            st.write("No news found for this ticker.")
+        
+        for article in news_list:
+            # --- FIX for TypeError ---
+            publish_time = article.get("providerPublishTime")
+            time_str = datetime.fromtimestamp(publish_time).strftime("%Y-%m-%d %H:%M") if publish_time else "Timestamp N/A"
+            # --- End Fix ---
+                
+            st.markdown(f"""
+            <div style="border: 1px solid #2D2D2D; border-radius: 8px; padding: 1rem; margin-bottom: 1rem; background-color: #121417;">
+                <h5 style="margin-bottom: 0.5rem;">{article['title']}</h5>
+                <small style="color: #A0A0A0;">{article['publisher']} | {time_str}</small>
+                <p style="margin-top: 0.5rem;"><a href="{article['link']}" target="_blank" style="color: #00A89C; text-decoration: none;">Read more</a></p>
             </div>
-        """, unsafe_allow_html=True)
-        
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            st.markdown("""
-                <div class='metric-card' style='text-align: center;'>
-                    <h3 style='color: #0EA5E9;'>Financial Health</h3>
-                    <p style='color: #94A3B8;'>
-                        Comprehensive ratio analysis including profitability, liquidity, 
-                        leverage, and quality scores (Altman Z-Score & Piotroski F-Score)
-                    </p>
-                </div>
             """, unsafe_allow_html=True)
-        
-        with col2:
-            st.markdown("""
-                <div class='metric-card' style='text-align: center;'>
-                    <h3 style='color: #0EA5E9;'>Risk Analytics</h3>
-                    <p style='color: #94A3B8;'>
-                        Monte Carlo simulations with VaR, CVaR, Sharpe & Sortino ratios 
-                        for probabilistic risk assessment
-                    </p>
-                </div>
-            """, unsafe_allow_html=True)
-        
-        with col3:
-            st.markdown("""
-                <div class='metric-card' style='text-align: center;'>
-                    <h3 style='color: #0EA5E9;'>DCF Valuation</h3>
-                    <p style='color: #94A3B8;'>
-                        2-Stage Enterprise Value DCF with calculated WACC, smart growth defaults, 
-                        and sensitivity analysis
-                    </p>
-                </div>
-            """, unsafe_allow_html=True)
-        
-        st.markdown("<br><br>", unsafe_allow_html=True)
-        
-        st.markdown("### Popular Companies to Analyze")
-        
-        companies = {
-            "Tech Giants": ["AAPL", "MSFT", "GOOGL", "META", "NVDA", "TSLA"],
-            "Financials": ["JPM", "BAC", "GS", "V", "MA", "BRK.B"],
-            "Consumer": ["AMZN", "WMT", "HD", "NKE", "COST", "MCD"],
-            "Healthcare": ["JNJ", "UNH", "PFE", "ABBV", "TMO", "LLY"]
-        }
-        
-        for sector, tickers in companies.items():
-            with st.expander(sector, expanded=False):
-                cols = st.columns(6)
-                for i, tick in enumerate(tickers):
-                    if cols[i].button(tick, key=f"landing_{tick}", use_container_width=True):
-                        st.session_state['ticker'] = tick
-                        st.session_state['data'] = fetch_company_data(tick)
-                        st.rerun()
-
-if __name__ == "__main__":
-    main()
+            
+else:
+    # Initial landing page
+    st.image("https://placehold.co/1200x300/0b0c0e/2D2D2D?text=Risk-Adjusted+Analyst", use_container_width=True)
+    st.info("Please enter a stock ticker and click 'Run Advanced Analysis' to begin.")
